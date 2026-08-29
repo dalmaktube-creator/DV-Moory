@@ -45,9 +45,9 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def ask(prompt: str) -> str:
-    with open("/dev/tty", "r+", encoding="utf-8") as tty:
-        tty.write(f"\033[38;5;255m{prompt}\033[0m: ")
-        tty.flush()
+    sys.stdout.write(f"\033[38;5;255m{prompt}\033[0m: ")
+    sys.stdout.flush()
+    with open("/dev/tty", "r", encoding="utf-8") as tty:
         return tty.readline().strip()
 
 
