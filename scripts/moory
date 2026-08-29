@@ -239,12 +239,13 @@ main_menu() {
       6) show_connection; pause;; 7) restart_service; pause;; 8) show_logs; pause;;
       9) backup_config; pause;; 10) rotate_token; pause;; 11) /usr/local/lib/moory/update.sh; pause;;
       12) configure_endpoint; pause;; 13) /usr/local/lib/moory/uninstall.sh; exit 0;;
+      14) safe_fetch_menu; pause;;
       0) clear 2>/dev/null || true; exit 0;; *) warn "Invalid option"; sleep 1;;
     esac
   done
 }
 
 case ${1:-menu} in
-  menu) main_menu;; status) system_status;; add) add_project;; list) list_projects;; remove) remove_project;; logs) show_logs;; restart) restart_service;; connection) show_connection;; backup) backup_config;; rotate-token) rotate_token;;
-  *) echo "Usage: moory [menu|status|add|list|remove|logs|restart|connection|backup|rotate-token]"; exit 2;;
+  menu) main_menu;; status) system_status;; add) add_project;; list) list_projects;; remove) remove_project;; logs) show_logs;; restart) restart_service;; connection) show_connection;; fetch) safe_fetch_menu;; backup) backup_config;; rotate-token) rotate_token;;
+  *) echo "Usage: moory [menu|status|add|list|remove|logs|restart|connection|fetch|backup|rotate-token]"; exit 2;;
 esac
