@@ -230,6 +230,7 @@ main_menu() {
     printf "${C_WHITE}  5${C_RESET}) GitHub authentication     ${C_WHITE}11${C_RESET}) Update Moory\n"
     printf "${C_WHITE}  6${C_RESET}) Notion connection info    ${C_WHITE}12${C_RESET}) Domain, port & HTTPS\n"
     printf "${C_WHITE}  0${C_RESET}) Exit                      ${C_WHITE}13${C_RESET}) ${C_RED}Full uninstall${C_RESET}\n"
+    printf "${C_WHITE} 14${C_RESET}) Safe repository fetch\n"
     footer
     local choice; choice=$(ask "Choose an option")
     case "$choice" in
