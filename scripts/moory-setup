@@ -13,7 +13,7 @@ box() {
   printf "${BLUE}╚══════════════════════════════════════════════════════════════╝${RESET}\n\n"
 }
 ok(){ printf "${GREEN}✔ %s${RESET}\n" "$*"; }; warn(){ printf "${YELLOW}⚠ %s${RESET}\n" "$*"; }; fail(){ printf "${RED}✘ %s${RESET}\n" "$*" >&2; exit 1; }
-ask(){ local p=$1 v; printf "${CYAN}%s${RESET}: " "$p" >&2; read -r v; printf '%s' "$v"; }
+ask(){ local p=$1 v; printf "${CYAN}%s${RESET}: " "$p" >&2; read -r v < /dev/tty; printf '%s' "$v"; }
 
 box
 printf "${BOLD}Choose GitHub authentication mode${RESET}\n\n"
@@ -31,7 +31,7 @@ case "$MODE" in
     printf "\n${BOLD}QUICK MODE${RESET}\n"
     printf "Create a fine-grained token with access only to selected repositories.\n"
     printf "Required permissions: Contents, Issues, Pull requests, Actions.\n\n"
-    read -rsp "Paste GitHub token (hidden): " TOKEN; echo
+    read -rsp "Paste GitHub token (hidden): " TOKEN < /dev/tty; echo
     [[ ${#TOKEN} -ge 20 && $TOKEN != *[[:space:]]* ]] || fail "The token format is invalid"
     printf '%s' "$TOKEN" > "$CONFIG/github-token"
     chown root:moory "$CONFIG/github-token"; chmod 640 "$CONFIG/github-token"
