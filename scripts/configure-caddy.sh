@@ -1,11 +1,39 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 [[ ${EUID} -eq 0 ]] || { echo "Run as root" >&2; exit 1; }
-DOMAIN=${1:-}
-[[ $DOMAIN =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Usage: $0 mcp.example.com" >&2; exit 1; }
-command -v caddy >/dev/null || { echo "Caddy is not installed" >&2; exit 1; }
 
-install -d -o root -g root -m 700 /etc/moory
+INSTALL_CONFIG=/etc/moory/install.env
+config_value() {
+  local key=$1
+  [[ -r $INSTALL_CONFIG ]] || return 0
+  sed -n "s/^${key}=//p" "$INSTALL_CONFIG" | tail -n 1
+}
+CURRENT_ROOT=$(config_value MOORY_ROOT); CURRENT_ROOT=${CURRENT_ROOT:-/srv/moory}
+CURRENT_PORT=$(config_value MOORY_PORT); CURRENT_PORT=${CURRENT_PORT:-8787}
+DOMAIN=${1:-$(config_value MOORY_DOMAIN)}
+PORT=${2:-$CURRENT_PORT}
+
+[[ $DOMAIN =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $DOMAIN == *.* && $DOMAIN != *..* ]] || { echo "Usage: $0 mcp.example.com [port]" >&2; exit 1; }
+[[ $PORT =~ ^[0-9]+$ && $PORT -ge 1024 && $PORT -le 65535 ]] || { echo "Port must be between 1024 and 65535" >&2; exit 1; }
+if [[ $PORT != "$CURRENT_PORT" ]] && ss -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${PORT}$"; then
+  echo "Port $PORT is already in use" >&2
+  exit 1
+fi
+
+if ! command -v caddy >/dev/null; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y caddy
+fi
+
+install -d -o root -g moory -m 750 /etc/moory
+cat > "$INSTALL_CONFIG" <<EOF
+MOORY_ROOT=$CURRENT_ROOT
+MOORY_PORT=$PORT
+MOORY_DOMAIN=$DOMAIN
+EOF
+chown root:moory "$INSTALL_CONFIG"; chmod 640 "$INSTALL_CONFIG"
+
 install -d -o root -g root -m 755 /etc/caddy/conf.d /etc/systemd/system/caddy.service.d
 if [[ ! -f /etc/moory/caddy.env ]]; then
   TOKEN=$(openssl rand -hex 32)
@@ -22,8 +50,8 @@ cat > /etc/caddy/conf.d/moory.caddy <<EOF
 ${DOMAIN} {
     @unauthorized not header Authorization "Bearer {\$MOORY_TOKEN}"
     respond @unauthorized 401
-    reverse_proxy 127.0.0.1:8787 {
-        header_up Host 127.0.0.1:8787
+    reverse_proxy 127.0.0.1:${PORT} {
+        header_up Host 127.0.0.1:${PORT}
     }
 }
 EOF
@@ -32,7 +60,18 @@ if ! grep -Fqx "$IMPORT_LINE" /etc/caddy/Caddyfile; then
   cp -a /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.backup-$(date +%Y%m%d-%H%M%S)"
   printf '\n%s\n' "$IMPORT_LINE" >> /etc/caddy/Caddyfile
 fi
+
+if ! getent ahosts "$DOMAIN" >/dev/null 2>&1; then
+  printf '\033[38;5;220m⚠ DNS does not resolve yet. Point the domain to this server, then retry.\033[0m\n'
+fi
+if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+  ufw allow 80/tcp >/dev/null
+  ufw allow 443/tcp >/dev/null
+fi
+
 caddy validate --config /etc/caddy/Caddyfile
 systemctl daemon-reload
+systemctl restart moory.service
 systemctl restart caddy
-printf '\033[38;5;82m✔ HTTPS configured: https://%s/mcp\033[0m\n' "$DOMAIN"
+printf '\033[38;5;82m✔ Secure endpoint configured: https://%s/mcp\033[0m\n' "$DOMAIN"
+printf 'Caddy will automatically request and renew the SSL certificate.\n'
