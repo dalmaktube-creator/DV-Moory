@@ -41,3 +41,10 @@ assert "MOORY_SOURCE_DIR" not in bootstrap
 assert "rm -rf /opt/moory" in bootstrap
 assert "--exclude='github-token'" in menu
 assert "Project name is already registered" in menu
+update = (root / "scripts/update.sh").read_text(encoding="utf-8")
+uninstall = (root / "scripts/uninstall.sh").read_text(encoding="utf-8")
+assert 'source "$INSTALL_CONFIG"' in update
+assert 'sed "s|@MOORY_ROOT@|$ROOT|g"' in update
+assert 'rm -rf --one-file-system "$ROOT"' in uninstall
+assert 'Domain, port & HTTPS' in menu
+assert '-C "$ROOT" config logs' in menu
