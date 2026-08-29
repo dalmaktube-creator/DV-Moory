@@ -37,14 +37,21 @@ print("Static security checks passed")
 
 bootstrap = (root / "install.sh").read_text(encoding="utf-8")
 menu = (root / "scripts/moory").read_text(encoding="utf-8")
-assert "MOORY_SOURCE_DIR" not in bootstrap
-assert "rm -rf /opt/moory" in bootstrap
-assert "--exclude='github-token'" in menu
-assert "Project name is already registered" in menu
 update = (root / "scripts/update.sh").read_text(encoding="utf-8")
 uninstall = (root / "scripts/uninstall.sh").read_text(encoding="utf-8")
+restore = (root / "scripts/restore.sh").read_text(encoding="utf-8")
+caddy = (root / "scripts/configure-caddy.sh").read_text(encoding="utf-8")
+fetch = (root / "scripts/fetch.sh").read_text(encoding="utf-8")
+assert "MOORY_SOURCE_DIR" not in bootstrap
+assert "rm -rf /opt/moory" in bootstrap
+assert "Project name is already registered" in menu
 assert 'source "$INSTALL_CONFIG"' in update
 assert 'sed "s|@MOORY_ROOT@|$ROOT|g"' in update
 assert 'rm -rf --one-file-system "$ROOT"' in uninstall
 assert 'Domain, port & HTTPS' in menu
-assert '-C "$ROOT" config logs' in menu
+assert 'Backup & restore' in menu
+assert '-C "$ROOT" config/projects.json' in menu
+assert 'Backup contains unexpected files' in restore
+assert 'trap rollback ERR' in caddy
+assert 'fetch --prune origin' in fetch
+assert 'pull ' not in fetch
