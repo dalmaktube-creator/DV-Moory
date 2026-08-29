@@ -499,6 +499,24 @@ def run_git(
         "GIT_CONFIG_NOSYSTEM": "0",
     }
 
+    askpass_path: Path | None = None
+    auth_config = load_key_value_file(GITHUB_AUTH_CONFIG)
+    if auth_config.get("GITHUB_AUTH_MODE") == "fine_grained_pat":
+        token_path = Path(auth_config.get("GITHUB_TOKEN_PATH", "")).resolve()
+        allowed_token_path = (ROOT / "config/github-token").resolve()
+        if token_path != allowed_token_path or not token_path.is_file():
+            return {"ok": False, "exit_code": -1, "output": "", "error": "GitHub token path is not allowlisted"}
+        descriptor, askpass_name = tempfile.mkstemp(prefix=".git-askpass-", dir=ROOT / "logs")
+        os.close(descriptor)
+        askpass_path = Path(askpass_name)
+        askpass_path.write_text(
+            "#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' x-access-token;;\n  *) cat \"$MOORY_GITHUB_TOKEN_PATH\";;\nesac\n",
+            encoding="utf-8",
+        )
+        os.chmod(askpass_path, 0o700)
+        environment["GIT_ASKPASS"] = str(askpass_path)
+        environment["MOORY_GITHUB_TOKEN_PATH"] = str(token_path)
+
     try:
         result = subprocess.run(
             ["git", "-C", str(path), *arguments],
@@ -519,6 +537,9 @@ def run_git(
             "output": "",
             "error": "Command timed out",
         }
+    finally:
+        if askpass_path is not None:
+            askpass_path.unlink(missing_ok=True)
 
     return {
         "ok": result.returncode == 0,
