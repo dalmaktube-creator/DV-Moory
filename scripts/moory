@@ -35,9 +35,9 @@ ask() { local prompt=$1; local value; printf "${C_WHITE}%s${C_RESET}: " "$prompt
 confirm() { local prompt=$1 answer; printf "${C_YELLOW}%s [y/N]${C_RESET}: " "$prompt"; read -r answer; [[ ${answer,,} == y || ${answer,,} == yes ]]; }
 
 ensure_layout() {
-  install -d -o moory -g moory -m 750 "$ROOT" "$REPOS_DIR" "$ROOT/logs" 2>/dev/null || true
-  install -d -o root -g moory -m 750 "$CONFIG_DIR" 2>/dev/null || true
-  install -d -o moory -g moory -m 700 "$SSH_DIR" 2>/dev/null || true
+  install -d -o moory -g moory -m 750 "$ROOT" "$REPOS_DIR" "$ROOT/logs"
+  install -d -o root -g moory -m 750 "$CONFIG_DIR"
+  install -d -o moory -g moory -m 700 "$SSH_DIR"
   if [[ ! -f $PROJECTS_FILE ]]; then
     printf '{}\n' > "$PROJECTS_FILE"
     chown root:moory "$PROJECTS_FILE"; chmod 640 "$PROJECTS_FILE"
@@ -82,7 +82,15 @@ add_project() {
   [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { error "Invalid owner/name"; return; }
   branch=$(ask "Allowed branch [main]"); branch=${branch:-main}
   [[ $branch =~ ^[A-Za-z0-9._/-]+$ && $branch != *..* ]] || { error "Invalid branch"; return; }
+  if python3 - "$PROJECTS_FILE" "$name" <<'PY'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]); data=json.loads(p.read_text()) if p.exists() else {}
+raise SystemExit(0 if sys.argv[2] in data else 1)
+PY
+  then error "Project name is already registered"; return; fi
   slug=${name//_/-}; key="$SSH_DIR/id_${slug}"; clone="$REPOS_DIR/$slug"; alias="github-moory-$slug"
+  [[ ! -e $clone || -d $clone/.git ]] || { error "Clone path already exists and is not a Git repository"; return; }
   if [[ ! -f $key ]]; then
     runuser -u moory -- ssh-keygen -q -t ed25519 -N '' -C "moory-$name" -f "$key"
     chmod 600 "$key"; chmod 644 "$key.pub"; chown moory:moory "$key" "$key.pub"
@@ -111,6 +119,14 @@ EOF
   if [[ ! -d $clone/.git ]]; then
     runuser -u moory -- env HOME="$ROOT" git clone "git@$alias:$repo.git" "$clone"
   fi
+  if runuser -u moory -- env HOME="$ROOT" git -C "$clone" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+    runuser -u moory -- env HOME="$ROOT" git -C "$clone" checkout -B "$branch" "origin/$branch"
+  elif [[ -z $(runuser -u moory -- env HOME="$ROOT" git -C "$clone" ls-remote origin) ]]; then
+    runuser -u moory -- env HOME="$ROOT" git -C "$clone" checkout -B "$branch"
+  else
+    error "Allowed branch does not exist on GitHub"
+    return
+  fi
   python3 - "$PROJECTS_FILE" "$name" "$repo" "$branch" "$clone" <<'PY'
 import json,sys,tempfile,os
 from pathlib import Path
@@ -128,14 +144,18 @@ remove_project() {
   local name; name=$(ask "Project name to unregister")
   [[ -n $name ]] || return
   if ! confirm "Unregister '$name'? The cloned files will NOT be deleted"; then return; fi
-  python3 - "$PROJECTS_FILE" "$name" <<'PY'
+  if python3 - "$PROJECTS_FILE" "$name" <<'PY'
 import json,sys
 from pathlib import Path
-p=Path(sys.argv[1]); d=json.loads(p.read_text()); existed=d.pop(sys.argv[2],None); p.write_text(json.dumps(d,indent=2,sort_keys=True)+'\n')
-raise SystemExit(0 if existed else 2)
+p=Path(sys.argv[1]); d=json.loads(p.read_text()); existed=d.pop(sys.argv[2],None)
+if existed is None: raise SystemExit(2)
+tmp=p.with_suffix('.tmp'); tmp.write_text(json.dumps(d,indent=2,sort_keys=True)+'\n'); tmp.replace(p)
 PY
-  local rc=$?
-  if [[ $rc -eq 0 ]]; then chown root:moory "$PROJECTS_FILE"; chmod 640 "$PROJECTS_FILE"; systemctl restart "$SERVICE"; ok "Project unregistered"; else warn "Project was not found"; fi
+  then
+    chown root:moory "$PROJECTS_FILE"; chmod 640 "$PROJECTS_FILE"; systemctl restart "$SERVICE"; ok "Project unregistered"
+  else
+    local rc=$?; [[ $rc -eq 2 ]] && warn "Project was not found" || error "Registry update failed"
+  fi
 }
 
 show_logs() { header; journalctl -u "$SERVICE" --no-pager -n 60; footer; }
@@ -155,7 +175,7 @@ rotate_token() {
 }
 backup_config() {
   need_root; local out="/root/moory-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
-  tar --exclude='*.pem' --exclude='id_*' --exclude='repos' -czf "$out" -C /srv moory/config moory/logs 2>/dev/null || true
+  tar --exclude='*.pem' --exclude='github-token' --exclude='id_*' --exclude='repos' -czf "$out" -C /srv moory/config moory/logs 2>/dev/null || true
   chmod 600 "$out"; ok "Non-secret backup created: $out"
 }
 
