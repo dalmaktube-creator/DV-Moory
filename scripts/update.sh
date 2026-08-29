@@ -12,8 +12,21 @@ ROOT=${MOORY_ROOT:-/srv/moory}
 [[ -d $SOURCE/.git ]] || { echo "Moory source checkout was not found at /opt/moory" >&2; exit 1; }
 BACKUP=$(mktemp -d /root/moory-update-backup.XXXXXX)
 cp -a "$ROOT/app/server.py" "$BACKUP/server.py"
-cp -a /usr/local/bin/moory /usr/local/bin/moory-setup "$BACKUP/"
-trap 'cp -a "$BACKUP/server.py" "$ROOT/app/server.py"; cp -a "$BACKUP/moory" "$BACKUP/moory-setup" /usr/local/bin/; systemctl restart moory 2>/dev/null || true' ERR
+cp -a /usr/local/bin/moory "$BACKUP/moory"
+cp -a /usr/local/bin/moory-setup "$BACKUP/moory-setup"
+cp -a /usr/local/bin/moory-configure-caddy "$BACKUP/moory-configure-caddy"
+cp -a /usr/local/lib/moory "$BACKUP/lib-moory"
+cp -a /etc/systemd/system/moory.service "$BACKUP/moory.service"
+rollback() {
+  cp -a "$BACKUP/server.py" "$ROOT/app/server.py"
+  cp -a "$BACKUP/moory" "$BACKUP/moory-setup" "$BACKUP/moory-configure-caddy" /usr/local/bin/
+  rm -rf /usr/local/lib/moory
+  cp -a "$BACKUP/lib-moory" /usr/local/lib/moory
+  cp -a "$BACKUP/moory.service" /etc/systemd/system/moory.service
+  systemctl daemon-reload
+  systemctl restart moory 2>/dev/null || true
+}
+trap rollback ERR
 git -C "$SOURCE" fetch --prune origin
 git -C "$SOURCE" pull --ff-only origin main
 "$ROOT/venv/bin/pip" install -r "$SOURCE/requirements.lock"
