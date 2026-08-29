@@ -170,9 +170,25 @@ show_logs() { header; journalctl -u "$SERVICE" --no-pager -n 60; footer; }
 restart_service() { need_root; systemctl restart "$SERVICE"; sleep 2; systemctl is-active "$SERVICE"; }
 show_connection() {
   header; printf "${C_BOLD}NOTION CONNECTION${C_RESET}\n\n"
-  if [[ -f /etc/moory/domain ]]; then info "MCP URL: https://$(cat /etc/moory/domain)/mcp"; else warn "Public domain is not configured"; fi
+  if [[ -n $DOMAIN ]]; then info "MCP URL: {{https://${DOMAIN}}}/mcp"; else warn "Public domain is not configured"; fi
   if [[ -f /etc/moory/caddy.env ]]; then info "Bearer token is stored securely. Select Reveal only when pasting it into Notion."; if confirm "Reveal token now?"; then sed -n 's/^MOORY_TOKEN=//p' /etc/moory/caddy.env; fi; else warn "Bearer token is not configured"; fi
   footer
+}
+
+configure_endpoint() {
+  need_root; header
+  printf "${C_BOLD}DOMAIN, PORT & HTTPS${C_RESET}\n\n"
+  info "Current local port: $PORT"
+  if [[ -n $DOMAIN ]]; then info "Current domain: $DOMAIN"; else warn "No public domain is configured"; fi
+  local domain port
+  domain=$(ask "Domain [${DOMAIN:-mcp.example.com}]")
+  domain=${domain:-$DOMAIN}
+  [[ -n $domain ]] || { error "A domain is required for Notion HTTPS access"; return; }
+  port=$(ask "Local MCP port [$PORT]")
+  port=${port:-$PORT}
+  if ! confirm "Apply domain '$domain' and local port '$port'?"; then warn "No settings were changed"; return; fi
+  /usr/local/bin/moory-configure-caddy "$domain" "$port"
+  ok "HTTPS endpoint configured: {{https://${domain}}}/mcp"
 }
 rotate_token() {
   need_root
@@ -196,8 +212,8 @@ main_menu() {
     printf "${C_WHITE}  3${C_RESET}) List repositories          ${C_WHITE}9${C_RESET}) Backup configuration\n"
     printf "${C_WHITE}  4${C_RESET}) Remove repository         ${C_WHITE}10${C_RESET}) Rotate Bearer token\n"
     printf "${C_WHITE}  5${C_RESET}) GitHub authentication     ${C_WHITE}11${C_RESET}) Update Moory\n"
-    printf "${C_WHITE}  6${C_RESET}) Notion connection info     ${C_WHITE}0${C_RESET}) Exit\n"
-    printf "${C_WHITE} 12${C_RESET}) ${C_RED}Full uninstall (deletes local clones)${C_RESET}\n"
+    printf "${C_WHITE}  6${C_RESET}) Notion connection info    ${C_WHITE}12${C_RESET}) Domain, port & HTTPS\n"
+    printf "${C_WHITE}  0${C_RESET}) Exit                      ${C_WHITE}13${C_RESET}) ${C_RED}Full uninstall${C_RESET}\n"
     footer
     local choice; choice=$(ask "Choose an option")
     case "$choice" in
@@ -205,7 +221,7 @@ main_menu() {
       4) remove_project; pause;; 5) /usr/local/bin/moory-setup; pause;;
       6) show_connection; pause;; 7) restart_service; pause;; 8) show_logs; pause;;
       9) backup_config; pause;; 10) rotate_token; pause;; 11) /usr/local/lib/moory/update.sh; pause;;
-      12) /usr/local/lib/moory/uninstall.sh; exit 0;;
+      12) configure_endpoint; pause;; 13) /usr/local/lib/moory/uninstall.sh; exit 0;;
       0) clear 2>/dev/null || true; exit 0;; *) warn "Invalid option"; sleep 1;;
     esac
   done
