@@ -76,7 +76,10 @@ fi
 [[ ! -L "$ROOT" && ! -L "$SOURCE" ]] || { echo "Refusing to remove symbolic-link roots" >&2; exit 1; }
 
 systemctl disable --now moory.service 2>/dev/null || true
+systemctl disable --now moory-fetch.timer 2>/dev/null || true
 rm -f /etc/systemd/system/moory.service
+rm -f /etc/systemd/system/moory-fetch.service
+rm -f /etc/systemd/system/moory-fetch.timer
 rm -f /etc/caddy/conf.d/moory.caddy
 rm -f /etc/systemd/system/caddy.service.d/moory.conf
 rm -rf /etc/moory
