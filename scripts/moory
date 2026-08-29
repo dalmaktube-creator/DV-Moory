@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+INSTALL_CONFIG=/etc/moory/install.env
+if [[ -r $INSTALL_CONFIG ]]; then
+  set -a
+  source "$INSTALL_CONFIG"
+  set +a
+fi
 ROOT=${MOORY_ROOT:-/srv/moory}
+PORT=${MOORY_PORT:-8787}
+DOMAIN=${MOORY_DOMAIN:-}
 CONFIG_DIR="$ROOT/config"
 REPOS_DIR="$ROOT/repos"
 SSH_DIR="$ROOT/.ssh"
