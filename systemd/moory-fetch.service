@@ -1,0 +1,10 @@
+[Unit]
+Description=Moory safe repository metadata fetch
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=moory
+Group=moory
+EnvironmentFile=/etc/moory/install.env
+ExecStart=/usr/local/lib/moory/fetch.sh
