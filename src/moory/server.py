@@ -400,7 +400,7 @@ def compact_issue(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def compact_pull(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+    return omit_none({
         "number": item.get("number"),
         "title": item.get("title"),
         "state": item.get("state"),
@@ -421,11 +421,11 @@ def compact_pull(item: dict[str, Any]) -> dict[str, Any]:
         "updated_at": item.get("updated_at"),
         "merged_at": item.get("merged_at"),
         "html_url": item.get("html_url"),
-    }
+    })
 
 
 def compact_release(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+    return omit_none({
         "id": item.get("id"),
         "tag_name": item.get("tag_name"),
         "name": item.get("name"),
@@ -449,11 +449,11 @@ def compact_release(item: dict[str, Any]) -> dict[str, Any]:
             for asset in item.get("assets", [])[:50]
             if isinstance(asset, dict)
         ],
-    }
+    })
 
 
 def compact_run(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+    return omit_none({
         "id": item.get("id"),
         "name": item.get("name"),
         "display_title": item.get("display_title"),
@@ -470,7 +470,7 @@ def compact_run(item: dict[str, Any]) -> dict[str, Any]:
         "updated_at": item.get("updated_at"),
         "html_url": item.get("html_url"),
         "artifacts_url": item.get("artifacts_url"),
-    }
+    })
 
 
 def run_git(
