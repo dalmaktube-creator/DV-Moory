@@ -170,7 +170,7 @@ show_logs() { header; journalctl -u "$SERVICE" --no-pager -n 60; footer; }
 restart_service() { need_root; systemctl restart "$SERVICE"; sleep 2; systemctl is-active "$SERVICE"; }
 show_connection() {
   header; printf "${C_BOLD}NOTION CONNECTION${C_RESET}\n\n"
-  if [[ -n $DOMAIN ]]; then info "MCP URL: {{https://${DOMAIN}}}/mcp"; else warn "Public domain is not configured"; fi
+  if [[ -n $DOMAIN ]]; then info "MCP URL: https://${DOMAIN}/mcp"; else warn "Public domain is not configured"; fi
   if [[ -f /etc/moory/caddy.env ]]; then info "Bearer token is stored securely. Select Reveal only when pasting it into Notion."; if confirm "Reveal token now?"; then sed -n 's/^MOORY_TOKEN=//p' /etc/moory/caddy.env; fi; else warn "Bearer token is not configured"; fi
   footer
 }
@@ -188,7 +188,7 @@ configure_endpoint() {
   port=${port:-$PORT}
   if ! confirm "Apply domain '$domain' and local port '$port'?"; then warn "No settings were changed"; return; fi
   /usr/local/bin/moory-configure-caddy "$domain" "$port"
-  ok "HTTPS endpoint configured: {{https://${domain}}}/mcp"
+  ok "HTTPS endpoint configured: https://${domain}/mcp"
 }
 rotate_token() {
   need_root
