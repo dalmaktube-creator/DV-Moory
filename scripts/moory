@@ -38,9 +38,9 @@ ok() { printf "${C_GREEN}✔ %s${C_RESET}\n" "$*"; }
 warn() { printf "${C_YELLOW}⚠ %s${C_RESET}\n" "$*"; }
 error() { printf "${C_RED}✘ %s${C_RESET}\n" "$*" >&2; }
 info() { printf "${C_CYAN}➜ %s${C_RESET}\n" "$*"; }
-pause() { printf "\n${C_DIM}Press Enter to continue...${C_RESET}"; read -r _; }
-ask() { local prompt=$1; local value; printf "${C_WHITE}%s${C_RESET}: " "$prompt" >&2; read -r value; printf '%s' "$value"; }
-confirm() { local prompt=$1 answer; printf "${C_YELLOW}%s [y/N]${C_RESET}: " "$prompt"; read -r answer; [[ ${answer,,} == y || ${answer,,} == yes ]]; }
+pause() { printf "\n${C_DIM}Press Enter to continue...${C_RESET}"; read -r _ < /dev/tty; }
+ask() { local prompt=$1; local value; printf "${C_WHITE}%s${C_RESET}: " "$prompt" >&2; read -r value < /dev/tty; printf '%s' "$value"; }
+confirm() { local prompt=$1 answer; printf "${C_YELLOW}%s [y/N]${C_RESET}: " "$prompt"; read -r answer < /dev/tty; [[ ${answer,,} == y || ${answer,,} == yes ]]; }
 
 ensure_layout() {
   install -d -o moory -g moory -m 750 "$ROOT" "$REPOS_DIR" "$ROOT/logs"
