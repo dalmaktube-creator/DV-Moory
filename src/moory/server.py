@@ -383,7 +383,7 @@ def compact_labels(labels: Any) -> list[str]:
 
 
 def compact_issue(item: dict[str, Any]) -> dict[str, Any]:
-    return omit_none({
+    return {
         "number": item.get("number"),
         "title": item.get("title"),
         "state": item.get("state"),
@@ -396,7 +396,7 @@ def compact_issue(item: dict[str, Any]) -> dict[str, Any]:
         "updated_at": item.get("updated_at"),
         "closed_at": item.get("closed_at"),
         "html_url": item.get("html_url"),
-    })
+    }
 
 
 def compact_pull(item: dict[str, Any]) -> dict[str, Any]:
