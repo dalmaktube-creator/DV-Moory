@@ -59,6 +59,8 @@ chmod 600 /etc/moory/domain
 cat > /etc/systemd/system/caddy.service.d/moory.conf <<'EOF'
 [Service]
 EnvironmentFile=/etc/moory/caddy.env
+ExecStart=
+ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
 EOF
 cat > /etc/caddy/conf.d/moory.caddy <<EOF
 ${DOMAIN} {
