@@ -2,6 +2,16 @@
 
 Moory is a self-hosted, security-hardened MCP bridge that lets Notion AI work with explicitly registered Git repositories and curated GitHub APIs. It includes guarded code changes, commits, pushes, issues, pull requests, Actions, logs, releases, secret scanning and audit logging.
 
+## Worker core
+
+Moory keeps reasoning with the connected agent and moves deterministic repository work to the server.
+
+- `worker_context` provides a compact repository overview or fixed-text code search.
+- `detail=summary` minimizes routine output, `detail=evidence` includes nearby source context, and `detail=full` is an explicit escape hatch.
+- Results are bounded and report truncation instead of silently hiding additional matches.
+
+The original granular read tools remain available, so agents can always inspect exact files and line ranges when compact context is insufficient.
+
 ## Easy installation
 
 After the first public release, install on Ubuntu with one command:

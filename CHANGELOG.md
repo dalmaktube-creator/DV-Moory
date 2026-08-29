@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added authenticated private Git fetch and push support for Quick Mode without storing tokens in remote URLs.
+- Preserved available pull request data when optional Checks or status permissions are unavailable.
+- Added the bounded `worker_context` tool with `summary`, `evidence`, and `full` escape-hatch levels.
+
 ## 1.0.0
 
 - Security audit hardening for bootstrap paths, backups, symlink reads and patch rename/copy metadata.
