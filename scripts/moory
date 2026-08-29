@@ -219,6 +219,28 @@ backup_config() {
   chmod 600 "$out"; ok "Non-secret backup created: $out"
 }
 
+restore_config() {
+  need_root
+  local archive
+  archive=$(ask "Backup archive path")
+  [[ -n $archive ]] || { warn "No backup was selected"; return; }
+  if ! confirm "Restore the project registry from '$archive'?"; then warn "Restore cancelled"; return; fi
+  /usr/local/lib/moory/restore.sh "$archive"
+}
+
+backup_restore_menu() {
+  need_root; header
+  printf "${C_BOLD}BACKUP & RESTORE${C_RESET}\n\n"
+  local choice
+  choice=$(ask "1) Create backup  2) Restore backup  0) Back")
+  case "$choice" in
+    1) backup_config;;
+    2) restore_config;;
+    0) return;;
+    *) warn "Invalid option";;
+  esac
+}
+
 main_menu() {
   need_root; ensure_layout
   while true; do
