@@ -35,6 +35,7 @@ install -o root -g root -m 755 "$SOURCE/scripts/moory" /usr/local/bin/moory
 install -o root -g root -m 755 "$SOURCE/scripts/moory-setup" /usr/local/bin/moory-setup
 install -o root -g root -m 755 "$SOURCE/scripts/configure-caddy.sh" /usr/local/bin/moory-configure-caddy
 install -o root -g root -m 755 "$SOURCE/scripts/update.sh" /usr/local/lib/moory/update.sh
+install -o root -g root -m 755 "$SOURCE/scripts/import-quick-repos.py" /usr/local/lib/moory/import-quick-repos.py
 install -o root -g root -m 755 "$SOURCE/scripts/uninstall.sh" /usr/local/lib/moory/uninstall.sh
 install -o root -g root -m 755 "$SOURCE/scripts/healthcheck.sh" /usr/local/lib/moory/healthcheck.sh
 install -o root -g root -m 755 "$SOURCE/scripts/fetch.sh" /usr/local/lib/moory/fetch.sh

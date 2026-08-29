@@ -72,6 +72,7 @@ chown moory:moory "$ROOT/.ssh/known_hosts"; chmod 600 "$ROOT/.ssh/known_hosts"
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/moory" /usr/local/bin/moory
 install -d -o root -g root -m 755 /usr/local/lib/moory
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/update.sh" /usr/local/lib/moory/update.sh
+install -o root -g root -m 755 "$SOURCE_DIR/scripts/import-quick-repos.py" /usr/local/lib/moory/import-quick-repos.py
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/uninstall.sh" /usr/local/lib/moory/uninstall.sh
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/healthcheck.sh" /usr/local/lib/moory/healthcheck.sh
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/fetch.sh" /usr/local/lib/moory/fetch.sh
