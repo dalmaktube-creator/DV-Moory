@@ -15,4 +15,8 @@ else
   rm -rf /opt/moory
   git clone --depth 1 --branch main "$REPO_URL" "$INSTALL_DIR"
 fi
-exec "$INSTALL_DIR/scripts/install.sh"
+if [[ -r /dev/tty ]]; then
+  exec "$INSTALL_DIR/scripts/install.sh" </dev/tty
+else
+  exec "$INSTALL_DIR/scripts/install.sh"
+fi
