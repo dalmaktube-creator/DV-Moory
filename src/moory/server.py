@@ -754,6 +754,92 @@ def search_tracked_code(
 
 
 @mcp.tool()
+def worker_context(
+    project: ProjectName,
+    operation: Literal["overview", "search"] = "overview",
+    query: str = "",
+    detail: Literal["summary", "evidence", "full"] = "summary",
+    limit: int = 20,
+) -> dict:
+    """Prepare bounded local context; use detail=full as an explicit escape hatch."""
+    config = PROJECTS.get(project)
+    if config is None:
+        return {"ok": False, "error": "Unknown project"}
+    if operation not in {"overview", "search"} or detail not in {"summary", "evidence", "full"}:
+        return {"ok": False, "error": "Invalid worker operation or detail level"}
+
+    files_result = run_git(project, ["ls-files"], output_limit=2_000_000)
+    if not files_result["ok"]:
+        return files_result
+    files = files_result["output"].splitlines()
+
+    if operation == "overview":
+        status = run_git(project, ["status", "--short", "--branch"])
+        head = run_git(project, ["log", "-1", "--pretty=format:%H|%s"])
+        extensions: dict[str, int] = {}
+        for path in files:
+            suffix = Path(path).suffix.lower() or "[none]"
+            extensions[suffix] = extensions.get(suffix, 0) + 1
+        result: dict[str, Any] = {
+            "ok": status["ok"] and head["ok"],
+            "project": project,
+            "repository": str(config["repo"]),
+            "allowed_branch": str(config["branch"]),
+            "clean": not bool(run_git(project, ["status", "--porcelain"])["output"].strip()),
+            "status": status["output"].strip(),
+            "head": head["output"].strip(),
+            "file_count": len(files),
+            "top_extensions": sorted(extensions.items(), key=lambda item: (-item[1], item[0]))[:10],
+            "detail": detail,
+        }
+        if detail in {"evidence", "full"}:
+            result["top_level"] = sorted({path.split("/", 1)[0] for path in files})[:100]
+            result["recent_commits"] = run_git(project, ["log", "-5", "--pretty=format:%h|%s"])["output"].splitlines()
+        if detail == "full":
+            result["files"] = files[:500]
+            result["files_truncated"] = len(files) > 500
+        return result
+
+    if not query or len(query) > 200:
+        return {"ok": False, "error": "Search query must be 1 to 200 characters"}
+    requested = max(1, min(limit, 100))
+    safe_limit = min(requested, 10 if detail == "summary" else 30 if detail == "evidence" else 100)
+    grep = run_git(project, ["grep", "-n", "-I", "--fixed-strings", "--", query], output_limit=2_000_000)
+    if grep["exit_code"] == 1:
+        return {"ok": True, "operation": "search", "detail": detail, "query": query, "matches": [], "truncated": False}
+    if not grep["ok"]:
+        return grep
+    raw_matches = grep["output"].splitlines()
+    matches: list[dict[str, Any]] = []
+    context_radius = 0 if detail == "summary" else 3 if detail == "evidence" else 12
+    root = config["path"].resolve()
+    for raw in raw_matches[:safe_limit]:
+        match = re.match(r"^(.+):(\d+):(.*)$", raw)
+        if not match:
+            continue
+        path, line_text, preview = match.groups()
+        line_number = int(line_text)
+        item: dict[str, Any] = {"path": path, "line": line_number, "preview": preview[:500]}
+        if context_radius and not is_sensitive_path(path):
+            candidate = (root / path).resolve()
+            if root in candidate.parents and candidate.is_file() and candidate.stat().st_size <= 1_000_000:
+                content = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+                start = max(1, line_number - context_radius)
+                end = min(len(content), line_number + context_radius)
+                item.update({"context_start": start, "context_end": end, "context": "\n".join(content[start - 1:end])})
+        matches.append(item)
+    return {
+        "ok": True,
+        "operation": "search",
+        "detail": detail,
+        "query": query,
+        "matches": matches,
+        "total_matches": len(raw_matches),
+        "truncated": len(raw_matches) > len(matches),
+    }
+
+
+@mcp.tool()
 def validate_changes(project: ProjectName, staged: bool = False) -> dict:
     """Run Git whitespace validation without modifying files."""
     arguments = ["diff"]
