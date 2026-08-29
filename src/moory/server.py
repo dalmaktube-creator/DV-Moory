@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 import threading
@@ -96,7 +97,7 @@ MAX_GH_LOG_ZIP_BYTES = 20_000_000
 MAX_GH_LOG_TEXT_BYTES = 25_000_000
 GH_LOG_REDACTIONS = [
     re.compile(r"(?i)(authorization\s*:\s*(?:bearer|token)\s+)[^\s]+"),
-    re.compile(r"(?i)(DVBRIDGE_TOKEN\s*=\s*)[^\s]+"),
+    re.compile(r"(?i)(MOORY_TOKEN\s*=\s*)[^\s]+"),
     re.compile(r"(?i)(GITHUB_TOKEN\s*=\s*)[^\s]+"),
     re.compile(r"\b(?:gh[opsu]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
     re.compile(r"-----BEGIN (?:OPENSSH |RSA |EC )?PRIVATE KEY-----.*?-----END (?:OPENSSH |RSA |EC )?PRIVATE KEY-----", re.DOTALL),
@@ -675,7 +676,10 @@ def read_tracked_file(
         return {"ok": False, "error": "Sensitive path is blocked"}
 
     root = config["path"].resolve()
-    candidate = (root / path).resolve()
+    unresolved = root / path
+    if unresolved.is_symlink():
+        return {"ok": False, "error": "Symbolic links are not readable"}
+    candidate = unresolved.resolve()
     if root not in candidate.parents:
         return {"ok": False, "error": "Path traversal is blocked"}
 
@@ -770,12 +774,28 @@ def apply_unified_patch(
         return {"ok": False, "error": "Possible secret detected; patch blocked"}
 
     patch_paths: list[str] = []
+    metadata_prefixes = ("+++ b/", "--- a/", "rename from ", "rename to ", "copy from ", "copy to ")
     for line in patch_text.splitlines():
-        if line.startswith("+++ b/") or line.startswith("--- a/"):
-            value = line[6:].strip()
-            if value != "/dev/null":
-                patch_paths.append(value)
+        for prefix in metadata_prefixes:
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip().strip('"')
+                if value != "/dev/null":
+                    patch_paths.append(value)
+                break
+        if line.startswith("diff --git "):
+            try:
+                fields = shlex.split(line)
+            except ValueError:
+                return {"ok": False, "error": "Invalid patch path metadata"}
+            for value in fields[2:4]:
+                patch_paths.append(value[2:] if value.startswith(("a/", "b/")) else value)
 
+    invalid_paths = [
+        path for path in patch_paths
+        if not path or "\x00" in path or Path(path).is_absolute() or ".." in Path(path).parts
+    ]
+    if invalid_paths:
+        return {"ok": False, "error": "Patch contains an invalid path"}
     if any(is_sensitive_path(path) for path in patch_paths):
         return {"ok": False, "error": "Patch touches a blocked sensitive path"}
 
@@ -906,7 +926,7 @@ def github_health() -> dict:
             item = json.loads(raw.decode("utf-8"))
             if item.get("full_name") == repo:
                 accessible.append(repo)
-        exact_scope = accessible == registered
+        exact_scope = bool(registered) and accessible == registered
         if token_info.get("auth_mode") == "github_app":
             _, raw, _ = _github_http("/installation/repositories?per_page=100", token=token)
             installed = json.loads(raw.decode("utf-8"))
