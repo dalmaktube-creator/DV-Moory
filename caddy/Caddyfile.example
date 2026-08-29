@@ -1,0 +1,7 @@
+mcp.example.com {
+    @unauthorized not header Authorization "Bearer {$MOORY_TOKEN}"
+    respond @unauthorized 401
+    reverse_proxy 127.0.0.1:8787 {
+        header_up Host 127.0.0.1:8787
+    }
+}

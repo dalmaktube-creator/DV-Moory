@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT=${MOORY_ROOT:-/srv/moory}
+CONFIG_DIR="$ROOT/config"
+REPOS_DIR="$ROOT/repos"
+SSH_DIR="$ROOT/.ssh"
+PROJECTS_FILE="$CONFIG_DIR/projects.json"
+SERVICE=moory
+
+# Opening `moory` as a normal user automatically asks for sudo and continues.
+if [[ ${EUID} -ne 0 ]]; then
+  exec sudo -- "$0" "$@"
+fi
+
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_DIM='\033[2m'
+C_BLUE='\033[38;5;39m'; C_CYAN='\033[38;5;45m'; C_GREEN='\033[38;5;82m'
+C_YELLOW='\033[38;5;220m'; C_RED='\033[38;5;203m'; C_WHITE='\033[38;5;255m'
+
+need_root() { [[ ${EUID} -eq 0 ]] || { error "Run with sudo: sudo moory"; exit 1; }; }
+line() { printf "${C_BLUE}╠══════════════════════════════════════════════════════════════╣${C_RESET}\n"; }
+header() {
+  clear 2>/dev/null || true
+  printf "${C_BLUE}╔══════════════════════════════════════════════════════════════╗${C_RESET}\n"
+  printf "${C_BLUE}║${C_RESET}  ${C_BOLD}${C_CYAN}MOORY${C_RESET}  ${C_DIM}Self-hosted GitHub ↔ MCP control center${C_RESET}             ${C_BLUE}║${C_RESET}\n"
+  line
+}
+footer() { printf "${C_BLUE}╚══════════════════════════════════════════════════════════════╝${C_RESET}\n"; }
+ok() { printf "${C_GREEN}✔ %s${C_RESET}\n" "$*"; }
+warn() { printf "${C_YELLOW}⚠ %s${C_RESET}\n" "$*"; }
+error() { printf "${C_RED}✘ %s${C_RESET}\n" "$*" >&2; }
+info() { printf "${C_CYAN}➜ %s${C_RESET}\n" "$*"; }
+pause() { printf "\n${C_DIM}Press Enter to continue...${C_RESET}"; read -r _; }
+ask() { local prompt=$1; local value; printf "${C_WHITE}%s${C_RESET}: " "$prompt" >&2; read -r value; printf '%s' "$value"; }
+confirm() { local prompt=$1 answer; printf "${C_YELLOW}%s [y/N]${C_RESET}: " "$prompt"; read -r answer; [[ ${answer,,} == y || ${answer,,} == yes ]]; }
+
+ensure_layout() {
+  install -d -o moory -g moory -m 750 "$ROOT" "$REPOS_DIR" "$ROOT/logs" 2>/dev/null || true
+  install -d -o root -g moory -m 750 "$CONFIG_DIR" 2>/dev/null || true
+  install -d -o moory -g moory -m 700 "$SSH_DIR" 2>/dev/null || true
+  if [[ ! -f $PROJECTS_FILE ]]; then
+    printf '{}\n' > "$PROJECTS_FILE"
+    chown root:moory "$PROJECTS_FILE"; chmod 640 "$PROJECTS_FILE"
+  fi
+}
+
+system_status() {
+  header
+  printf "${C_BOLD}SYSTEM STATUS${C_RESET}\n\n"
+  if systemctl is-active --quiet "$SERVICE"; then ok "MCP service is active"; else error "MCP service is not active"; fi
+  if ss -lnt 2>/dev/null | grep -q '127.0.0.1:8787'; then ok "Local MCP port 8787 is listening"; else warn "Port 8787 is not listening"; fi
+  if systemctl is-active --quiet caddy 2>/dev/null; then ok "Caddy is active"; else warn "Caddy is not active"; fi
+  if [[ -r $PROJECTS_FILE ]]; then
+    local count; count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$PROJECTS_FILE" 2>/dev/null || echo 0)
+    info "Registered projects: $count"
+  fi
+  if [[ -f $CONFIG_DIR/github-auth.env ]]; then ok "GitHub authentication is configured"; else warn "GitHub authentication is not configured"; fi
+  footer
+}
+
+list_projects() {
+  header; printf "${C_BOLD}REGISTERED PROJECTS${C_RESET}\n\n"
+  python3 - "$PROJECTS_FILE" <<'PY'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]); data=json.loads(p.read_text()) if p.exists() else {}
+if not data: print('  No projects registered yet.')
+for name,cfg in sorted(data.items()):
+    print(f"  • {name}\n    GitHub: {cfg['repo']}\n    Branch: {cfg['branch']}\n    Path:   {cfg['path']}\n")
+PY
+  footer
+}
+
+add_project() {
+  need_root; ensure_layout; header
+  printf "${C_BOLD}ADD A GITHUB PROJECT${C_RESET}\n\n"
+  info "Moory will generate a dedicated deploy key and prepare the clone."
+  local name repo branch slug key clone alias
+  name=$(ask "Short project name (example: website)")
+  [[ $name =~ ^[a-z][a-z0-9_-]{1,31}$ ]] || { error "Use 2-32 lowercase letters, numbers, _ or -"; return; }
+  repo=$(ask "GitHub repository (owner/name)")
+  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { error "Invalid owner/name"; return; }
+  branch=$(ask "Allowed branch [main]"); branch=${branch:-main}
+  [[ $branch =~ ^[A-Za-z0-9._/-]+$ && $branch != *..* ]] || { error "Invalid branch"; return; }
+  slug=${name//_/-}; key="$SSH_DIR/id_${slug}"; clone="$REPOS_DIR/$slug"; alias="github-moory-$slug"
+  if [[ ! -f $key ]]; then
+    runuser -u moory -- ssh-keygen -q -t ed25519 -N '' -C "moory-$name" -f "$key"
+    chmod 600 "$key"; chmod 644 "$key.pub"; chown moory:moory "$key" "$key.pub"
+  fi
+  if ! grep -q "^Host $alias$" "$SSH_DIR/config" 2>/dev/null; then
+    cat >> "$SSH_DIR/config" <<EOF
+
+Host $alias
+    HostName github.com
+    User git
+    IdentityFile $key
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+EOF
+    chown moory:moory "$SSH_DIR/config"; chmod 600 "$SSH_DIR/config"
+  fi
+  printf "\n${C_YELLOW}Add this PUBLIC key in GitHub → Repository Settings → Deploy keys.${C_RESET}\n"
+  printf "${C_YELLOW}Enable: Allow write access${C_RESET}\n\n"
+  cat "$key.pub"
+  printf "\n"
+  if ! confirm "Have you added the deploy key to GitHub?"; then warn "Saved. Run Add project again after adding the key."; return; fi
+  local test_output
+  test_output=$(runuser -u moory -- env HOME="$ROOT" ssh -T "$alias" 2>&1 || true)
+  if [[ $test_output != *"successfully authenticated"* ]]; then error "GitHub SSH test failed"; printf '%s\n' "$test_output"; return; fi
+  ok "GitHub SSH authentication succeeded"
+  if [[ ! -d $clone/.git ]]; then
+    runuser -u moory -- env HOME="$ROOT" git clone "git@$alias:$repo.git" "$clone"
+  fi
+  python3 - "$PROJECTS_FILE" "$name" "$repo" "$branch" "$clone" <<'PY'
+import json,sys,tempfile,os
+from pathlib import Path
+path=Path(sys.argv[1]); data=json.loads(path.read_text()) if path.exists() else {}
+data[sys.argv[2]]={'repo':sys.argv[3],'branch':sys.argv[4],'path':sys.argv[5]}
+tmp=path.with_suffix('.tmp'); tmp.write_text(json.dumps(data,indent=2,sort_keys=True)+'\n'); os.chmod(tmp,0o640); tmp.replace(path)
+PY
+  chown root:moory "$PROJECTS_FILE"; chmod 640 "$PROJECTS_FILE"
+  systemctl restart "$SERVICE" 2>/dev/null || true
+  ok "Project '$name' was registered"
+}
+
+remove_project() {
+  need_root; list_projects
+  local name; name=$(ask "Project name to unregister")
+  [[ -n $name ]] || return
+  if ! confirm "Unregister '$name'? The cloned files will NOT be deleted"; then return; fi
+  python3 - "$PROJECTS_FILE" "$name" <<'PY'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]); d=json.loads(p.read_text()); existed=d.pop(sys.argv[2],None); p.write_text(json.dumps(d,indent=2,sort_keys=True)+'\n')
+raise SystemExit(0 if existed else 2)
+PY
+  local rc=$?
+  if [[ $rc -eq 0 ]]; then chown root:moory "$PROJECTS_FILE"; chmod 640 "$PROJECTS_FILE"; systemctl restart "$SERVICE"; ok "Project unregistered"; else warn "Project was not found"; fi
+}
+
+show_logs() { header; journalctl -u "$SERVICE" --no-pager -n 60; footer; }
+restart_service() { need_root; systemctl restart "$SERVICE"; sleep 2; systemctl is-active "$SERVICE"; }
+show_connection() {
+  header; printf "${C_BOLD}NOTION CONNECTION${C_RESET}\n\n"
+  if [[ -f /etc/moory/domain ]]; then info "MCP URL: https://$(cat /etc/moory/domain)/mcp"; else warn "Public domain is not configured"; fi
+  if [[ -f /etc/moory/caddy.env ]]; then info "Bearer token is stored securely. Select Reveal only when pasting it into Notion."; if confirm "Reveal token now?"; then sed -n 's/^MOORY_TOKEN=//p' /etc/moory/caddy.env; fi; else warn "Bearer token is not configured"; fi
+  footer
+}
+rotate_token() {
+  need_root
+  [[ -f /etc/moory/caddy.env ]] || { error "Caddy authentication is not configured"; return; }
+  local token; token=$(openssl rand -hex 32); printf 'MOORY_TOKEN=%s\n' "$token" > /etc/moory/caddy.env; chmod 600 /etc/moory/caddy.env
+  systemctl daemon-reload; systemctl restart caddy
+  ok "Bearer token rotated. Reconnect Moory in Notion."
+}
+backup_config() {
+  need_root; local out="/root/moory-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+  tar --exclude='*.pem' --exclude='id_*' --exclude='repos' -czf "$out" -C /srv moory/config moory/logs 2>/dev/null || true
+  chmod 600 "$out"; ok "Non-secret backup created: $out"
+}
+
+main_menu() {
+  need_root; ensure_layout
+  while true; do
+    header
+    printf "${C_WHITE}  1${C_RESET}) ${C_GREEN}System status${C_RESET}             ${C_WHITE}7${C_RESET}) Restart MCP service\n"
+    printf "${C_WHITE}  2${C_RESET}) Add repository             ${C_WHITE}8${C_RESET}) View service logs\n"
+    printf "${C_WHITE}  3${C_RESET}) List repositories          ${C_WHITE}9${C_RESET}) Backup configuration\n"
+    printf "${C_WHITE}  4${C_RESET}) Remove repository         ${C_WHITE}10${C_RESET}) Rotate Bearer token\n"
+    printf "${C_WHITE}  5${C_RESET}) GitHub authentication     ${C_WHITE}11${C_RESET}) Update Moory\n"
+    printf "${C_WHITE}  6${C_RESET}) Notion connection info     ${C_WHITE}0${C_RESET}) Exit\n"
+    footer
+    local choice; choice=$(ask "Choose an option")
+    case "$choice" in
+      1) system_status; pause;; 2) add_project; pause;; 3) list_projects; pause;;
+      4) remove_project; pause;; 5) /usr/local/bin/moory-setup; pause;;
+      6) show_connection; pause;; 7) restart_service; pause;; 8) show_logs; pause;;
+      9) backup_config; pause;; 10) rotate_token; pause;; 11) /usr/local/lib/moory/update.sh; pause;;
+      0) clear 2>/dev/null || true; exit 0;; *) warn "Invalid option"; sleep 1;;
+    esac
+  done
+}
+
+case ${1:-menu} in
+  menu) main_menu;; status) system_status;; add) add_project;; list) list_projects;; remove) remove_project;; logs) show_logs;; restart) restart_service;; connection) show_connection;; backup) backup_config;; rotate-token) rotate_token;;
+  *) echo "Usage: moory [menu|status|add|list|remove|logs|restart|connection|backup|rotate-token]"; exit 2;;
+esac

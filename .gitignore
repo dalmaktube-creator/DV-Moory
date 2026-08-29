@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials*.json
+secrets/
+artifacts/
+*.log
+.DS_Store

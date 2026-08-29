@@ -1,0 +1,22 @@
+[project]
+name = "moory-mcp"
+version = "1.0.0"
+description = "Self-hosted security-hardened GitHub MCP bridge"
+requires-python = ">=3.12"
+dependencies = [
+  "mcp==2.1.1",
+  "PyJWT[crypto]==2.10.1",
+]
+
+[project.scripts]
+moory-server = "moory.server:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

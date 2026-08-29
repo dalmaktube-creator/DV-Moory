@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT=${MOORY_ROOT:-/srv/moory}
+CONFIG="$ROOT/config"
+RESET='\033[0m'; BOLD='\033[1m'; BLUE='\033[38;5;39m'; CYAN='\033[38;5;45m'; GREEN='\033[38;5;82m'; YELLOW='\033[38;5;220m'; RED='\033[38;5;203m'
+
+[[ ${EUID} -eq 0 ]] || { echo "Run: sudo moory-setup" >&2; exit 1; }
+box() {
+  clear 2>/dev/null || true
+  printf "${BLUE}╔══════════════════════════════════════════════════════════════╗${RESET}\n"
+  printf "${BLUE}║${RESET}  ${BOLD}${CYAN}MOORY SETUP${RESET}  Easy self-hosted GitHub ↔ MCP installation   ${BLUE}║${RESET}\n"
+  printf "${BLUE}╚══════════════════════════════════════════════════════════════╝${RESET}\n\n"
+}
+ok(){ printf "${GREEN}✔ %s${RESET}\n" "$*"; }; warn(){ printf "${YELLOW}⚠ %s${RESET}\n" "$*"; }; fail(){ printf "${RED}✘ %s${RESET}\n" "$*" >&2; exit 1; }
+ask(){ local p=$1 v; printf "${CYAN}%s${RESET}: " "$p" >&2; read -r v; printf '%s' "$v"; }
+
+box
+printf "${BOLD}Choose GitHub authentication mode${RESET}\n\n"
+printf "  ${GREEN}1) Quick Mode${RESET}\n"
+printf "     Fastest setup with a fine-grained GitHub token.\n"
+printf "     Best for personal use and first-time users. About 5 minutes.\n\n"
+printf "  ${CYAN}2) Hardened Mode${RESET}\n"
+printf "     GitHub App with short-lived installation tokens.\n"
+printf "     Best for production, teams and permanent servers. About 15 minutes.\n\n"
+MODE=$(ask "Select mode [1/2]")
+install -d -o root -g moory -m 750 "$CONFIG"
+
+case "$MODE" in
+  1)
+    printf "\n${BOLD}QUICK MODE${RESET}\n"
+    printf "Create a fine-grained token with access only to selected repositories.\n"
+    printf "Required permissions: Contents, Issues, Pull requests, Actions.\n\n"
+    read -rsp "Paste GitHub token (hidden): " TOKEN; echo
+    [[ ${#TOKEN} -ge 20 && $TOKEN != *[[:space:]]* ]] || fail "The token format is invalid"
+    printf '%s' "$TOKEN" > "$CONFIG/github-token"
+    chown root:moory "$CONFIG/github-token"; chmod 640 "$CONFIG/github-token"
+    cat > "$CONFIG/github-auth.env" <<EOF
+GITHUB_AUTH_MODE=fine_grained_pat
+GITHUB_TOKEN_PATH=$CONFIG/github-token
+EOF
+    unset TOKEN
+    ok "Quick GitHub authentication saved securely"
+    ;;
+  2)
+    printf "\n${BOLD}HARDENED MODE${RESET}\n"
+    APP_ID=$(ask "GitHub App ID")
+    INSTALLATION_ID=$(ask "GitHub Installation ID")
+    OWNER=$(ask "GitHub owner/account")
+    KEY_PATH=$(ask "Private key path on this server")
+    [[ $APP_ID =~ ^[0-9]+$ ]] || fail "Invalid App ID"
+    [[ $INSTALLATION_ID =~ ^[0-9]+$ ]] || fail "Invalid Installation ID"
+    [[ $OWNER =~ ^[A-Za-z0-9-]+$ ]] || fail "Invalid GitHub owner"
+    [[ -f $KEY_PATH ]] || fail "Private key file was not found"
+    openssl pkey -in "$KEY_PATH" -check -noout >/dev/null || fail "Private key validation failed"
+    install -o root -g moory -m 640 "$KEY_PATH" "$CONFIG/github-app.pem"
+    cat > "$CONFIG/github-auth.env" <<EOF
+GITHUB_AUTH_MODE=github_app
+GITHUB_APP_ID=$APP_ID
+GITHUB_INSTALLATION_ID=$INSTALLATION_ID
+GITHUB_PRIVATE_KEY_PATH=$CONFIG/github-app.pem
+GITHUB_OWNER=$OWNER
+EOF
+    ok "Hardened GitHub App authentication saved securely"
+    ;;
+  *) fail "Invalid mode";;
+esac
+chown root:moory "$CONFIG/github-auth.env"; chmod 640 "$CONFIG/github-auth.env"
+
+printf "\n${BOLD}PUBLIC HTTPS ENDPOINT${RESET}\n"
+printf "  1) Configure with my domain (recommended)\n"
+printf "  2) Skip for now\n"
+ENDPOINT=$(ask "Select [1/2]")
+if [[ $ENDPOINT == 1 ]]; then
+  DOMAIN=$(ask "Domain pointing to this server (example: mcp.example.com)")
+  /usr/local/bin/moory-configure-caddy "$DOMAIN"
+else
+  warn "HTTPS setup skipped. Notion needs a public HTTPS MCP URL."
+fi
+
+systemctl enable --now moory.service
+ok "Moory service started"
+
+printf "\n${BOLD}FIRST REPOSITORY${RESET}\n"
+ANSWER=$(ask "Add a repository now? [Y/n]")
+if [[ ${ANSWER,,} != n && ${ANSWER,,} != no ]]; then
+  /usr/local/bin/moory add
+fi
+
+printf "\n${GREEN}${BOLD}Installation completed.${RESET}\n"
+printf "Open the control center anytime with:\n\n  ${CYAN}sudo moory${RESET}\n\n"

@@ -1,0 +1,1638 @@
+from __future__ import annotations
+
+import io
+import json
+import os
+import re
+import subprocess
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Literal
+
+import jwt
+from mcp.server import MCPServer
+
+ProjectName = str
+
+ROOT = Path(os.environ.get("MOORY_ROOT", "/srv/moory")).resolve()
+REPOS_ROOT = (ROOT / "repos").resolve()
+PROJECTS_FILE = ROOT / "config/projects.json"
+
+
+def load_projects() -> dict[str, dict[str, Any]]:
+    if not PROJECTS_FILE.is_file():
+        return {}
+    raw = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or len(raw) > 50:
+        raise ValueError("Invalid projects registry")
+    projects: dict[str, dict[str, Any]] = {}
+    for name, config in raw.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,31}", name):
+            raise ValueError("Invalid project name in registry")
+        if not isinstance(config, dict):
+            raise ValueError("Invalid project configuration")
+        repo = str(config.get("repo", ""))
+        branch = str(config.get("branch", ""))
+        path = Path(str(config.get("path", ""))).resolve()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+            raise ValueError("Invalid GitHub repository in registry")
+        if not re.fullmatch(r"[A-Za-z0-9._/-]+", branch) or ".." in branch:
+            raise ValueError("Invalid branch in registry")
+        if path == REPOS_ROOT or REPOS_ROOT not in path.parents:
+            raise ValueError("Project path must be under the Moory repositories directory")
+        projects[name] = {"repo": repo, "branch": branch, "path": path}
+    return projects
+
+
+PROJECTS = load_projects()
+AUDIT_LOG = ROOT / "logs/audit.jsonl"
+PATCH_TMP_DIR = ROOT / "logs"
+GITHUB_AUTH_CONFIG = ROOT / "config/github-auth.env"
+WRITE_LOCK = threading.Lock()
+TOKEN_LOCK = threading.Lock()
+GH_TOKEN_CACHE: dict[str, Any] = {"token": "", "expires_epoch": 0, "expires_at": "", "permissions": {}, "repository_selection": "", "auth_mode": ""}
+MAX_PATCH_BYTES = 500_000
+
+SENSITIVE_SUFFIXES = {
+    ".key", ".pem", ".p12", ".pfx", ".jks", ".keystore",
+}
+SENSITIVE_NAMES = {
+    ".env", ".ssh", ".npmrc", ".pypirc", "auth.json",
+    "credentials", "credentials.json", "google-services.json",
+    "id_rsa", "id_ed25519", "secrets", "service-account.json",
+}
+SECRET_PATTERN = (
+    r"-----BEGIN (OPENSSH |RSA |EC )?PRIVATE KEY-----"
+    r"|(?:MOORY_TOKEN|GITHUB_TOKEN)\s*=\s*[A-Za-z0-9_./+=:-]{20,}"
+    r"|github_" r"pat_[A-Za-z0-9_]{20,}"
+    r"|ghp_" r"[A-Za-z0-9]{20,}"
+)
+
+mcp = MCPServer(
+    name="Moory",
+    version="1.0.0",
+    description="Self-hosted restricted Git and GitHub API bridge for registered projects.",
+    instructions=(
+        "Only use registered projects and approved branches. Never expose "
+        "secrets. Never force-push, rewrite history, delete repositories, or "
+        "run arbitrary shell commands. Validate changes before commit and push. "
+        "GitHub API access is restricted to registered repositories and curated tools."
+    ),
+)
+
+
+GH_API_BASE = "https://api.github.com"
+GH_API_VERSION = "2022-11-28"
+GH_USER_AGENT = "Moory/1.0.0"
+MAX_GH_JSON_BYTES = 5_000_000
+MAX_GH_LOG_ZIP_BYTES = 20_000_000
+MAX_GH_LOG_TEXT_BYTES = 25_000_000
+GH_LOG_REDACTIONS = [
+    re.compile(r"(?i)(authorization\s*:\s*(?:bearer|token)\s+)[^\s]+"),
+    re.compile(r"(?i)(DVBRIDGE_TOKEN\s*=\s*)[^\s]+"),
+    re.compile(r"(?i)(GITHUB_TOKEN\s*=\s*)[^\s]+"),
+    re.compile(r"\b(?:gh[opsu]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
+    re.compile(r"-----BEGIN (?:OPENSSH |RSA |EC )?PRIVATE KEY-----.*?-----END (?:OPENSSH |RSA |EC )?PRIVATE KEY-----", re.DOTALL),
+]
+
+
+def load_key_value_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise ValueError("Invalid GitHub App configuration")
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def redact_github_text(text: str) -> str:
+    result = text
+    for pattern in GH_LOG_REDACTIONS:
+        if pattern.groups:
+            result = pattern.sub(lambda match: match.group(1) + "[REDACTED]", result)
+        else:
+            result = pattern.sub("[REDACTED PRIVATE KEY]", result)
+    return result
+
+
+def _read_limited(response: Any, maximum_bytes: int) -> bytes:
+    data = response.read(maximum_bytes + 1)
+    if len(data) > maximum_bytes:
+        raise ValueError("GitHub response exceeded the configured size limit")
+    return data
+
+
+def _github_http(
+    path: str,
+    *,
+    method: str = "GET",
+    token: str,
+    body: dict[str, Any] | None = None,
+    accept: str = "application/vnd.github+json",
+    maximum_bytes: int = MAX_GH_JSON_BYTES,
+) -> tuple[int, bytes, dict[str, str]]:
+    if not path.startswith("/") or "\x00" in path:
+        raise ValueError("Invalid GitHub API path")
+    allowed_prefixes = ("/repos/", "/installation/", "/rate_limit")
+    if not path.startswith(allowed_prefixes):
+        raise ValueError("GitHub API path is not allowlisted")
+    payload = None if body is None else json.dumps(body).encode("utf-8")
+    headers = {
+        "Accept": accept,
+        "Authorization": "Bearer " + token,
+        "User-Agent": GH_USER_AGENT,
+        "X-GitHub-Api-Version": GH_API_VERSION,
+    }
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        GH_API_BASE + path,
+        data=payload,
+        method=method,
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = _read_limited(response, maximum_bytes)
+            return response.status, data, {key.lower(): value for key, value in response.headers.items()}
+    except urllib.error.HTTPError as error:
+        raw = error.read(200_000)
+        try:
+            parsed = json.loads(raw.decode("utf-8", errors="replace"))
+            message = str(parsed.get("message", "GitHub API request failed"))
+        except (ValueError, AttributeError):
+            message = "GitHub API request failed"
+        raise RuntimeError(f"GitHub API HTTP {error.code}: {redact_github_text(message)[:500]}") from None
+    except urllib.error.URLError as error:
+        raise RuntimeError(f"GitHub API connection failed: {str(error.reason)[:300]}") from None
+
+
+def github_installation_token() -> tuple[str, dict[str, Any]]:
+    now = int(time.time())
+    with TOKEN_LOCK:
+        if GH_TOKEN_CACHE["token"] and now < int(GH_TOKEN_CACHE["expires_epoch"]) - 180:
+            return str(GH_TOKEN_CACHE["token"]), dict(GH_TOKEN_CACHE)
+
+        config = load_key_value_file(GITHUB_AUTH_CONFIG)
+        mode = config.get("GITHUB_AUTH_MODE", "github_app")
+        if mode == "fine_grained_pat":
+            token_path = Path(config.get("GITHUB_TOKEN_PATH", "")).resolve()
+            allowed_path = (ROOT / "config/github-token").resolve()
+            if token_path != allowed_path or not token_path.is_file():
+                raise ValueError("GitHub token path is not allowlisted")
+            token = token_path.read_text(encoding="utf-8").strip()
+            if len(token) < 20 or any(char.isspace() for char in token):
+                raise ValueError("GitHub fine-grained token is invalid")
+            GH_TOKEN_CACHE.update({
+                "token": token, "expires_epoch": now + 900, "expires_at": "managed by user",
+                "permissions": {}, "repository_selection": "registry", "auth_mode": mode,
+            })
+            return token, dict(GH_TOKEN_CACHE)
+
+        if mode != "github_app":
+            raise ValueError("Unsupported GitHub authentication mode")
+        required = {"GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_PRIVATE_KEY_PATH"}
+        if not required.issubset(config):
+            raise ValueError("GitHub App configuration is incomplete")
+        if not config["GITHUB_APP_ID"].isdigit() or not config["GITHUB_INSTALLATION_ID"].isdigit():
+            raise ValueError("GitHub App numeric identifiers are invalid")
+        private_key_path = Path(config["GITHUB_PRIVATE_KEY_PATH"]).resolve()
+        allowed_key = (ROOT / "config/github-app.pem").resolve()
+        if private_key_path != allowed_key:
+            raise ValueError("GitHub private key path is not allowlisted")
+        private_key = private_key_path.read_text(encoding="utf-8")
+        app_jwt = jwt.encode(
+            {"iat": now - 60, "exp": now + 540, "iss": config["GITHUB_APP_ID"]},
+            private_key, algorithm="RS256",
+        )
+        path = f"/app/installations/{config['GITHUB_INSTALLATION_ID']}/access_tokens"
+        request = urllib.request.Request(
+            GH_API_BASE + path, data=b"{}", method="POST",
+            headers={
+                "Accept": "application/vnd.github+json", "Authorization": "Bearer " + app_jwt,
+                "User-Agent": GH_USER_AGENT, "X-GitHub-Api-Version": GH_API_VERSION,
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                token_data = json.loads(_read_limited(response, 200_000))
+        except urllib.error.HTTPError as error:
+            raise RuntimeError(f"GitHub App authentication failed with HTTP {error.code}") from None
+        token = str(token_data.get("token", "")); expires_at = str(token_data.get("expires_at", ""))
+        if not token or not expires_at:
+            raise RuntimeError("GitHub App returned an invalid installation token")
+        try:
+            expires_epoch = int(datetime.fromisoformat(expires_at.replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            expires_epoch = now + 3000
+        GH_TOKEN_CACHE.update({
+            "token": token, "expires_epoch": expires_epoch, "expires_at": expires_at,
+            "permissions": token_data.get("permissions", {}),
+            "repository_selection": token_data.get("repository_selection", ""), "auth_mode": mode,
+        })
+        return token, dict(GH_TOKEN_CACHE)
+
+
+def github_repo(project: ProjectName) -> str:
+    config = PROJECTS.get(project)
+    if config is None:
+        raise ValueError("Unknown or unregistered project")
+    repo = str(config.get("repo", ""))
+    if repo not in {str(item["repo"]) for item in PROJECTS.values()}:
+        raise ValueError("Repository is not allowlisted")
+    return repo
+
+
+def github_json(
+    project: ProjectName,
+    suffix: str,
+    *,
+    query: dict[str, Any] | None = None,
+) -> Any:
+    if (suffix and not suffix.startswith("/")) or ".." in suffix or "\x00" in suffix:
+        raise ValueError("Invalid repository API path")
+    repo = github_repo(project)
+    path = f"/repos/{repo}{suffix}"
+    if query:
+        filtered = {key: value for key, value in query.items() if value not in (None, "")}
+        if filtered:
+            path += "?" + urllib.parse.urlencode(filtered)
+    token, _ = github_installation_token()
+    _, raw, _ = _github_http(path, token=token)
+    return json.loads(raw.decode("utf-8")) if raw else {}
+
+
+
+def github_write_json(
+    project: ProjectName,
+    suffix: str,
+    *,
+    method: Literal["POST", "PATCH", "PUT"],
+    body: dict[str, Any],
+    audit_action: str,
+) -> dict[str, Any]:
+    if (suffix and not suffix.startswith("/")) or ".." in suffix or "\x00" in suffix:
+        raise ValueError("Invalid repository API path")
+    repo = github_repo(project)
+    token, _ = github_installation_token()
+    status, raw, _ = _github_http(
+        f"/repos/{repo}{suffix}",
+        method=method,
+        token=token,
+        body=body,
+    )
+    result = json.loads(raw.decode("utf-8")) if raw else {}
+    audit(audit_action, project, 200 <= status < 300, f"HTTP {status}")
+    return {"status": status, "data": result}
+
+
+def validate_title(value: str, label: str = "title") -> str:
+    clean = value.strip()
+    if not clean or len(clean) > 256 or "\x00" in clean:
+        raise ValueError(f"{label} must be 1 to 256 characters")
+    return clean
+
+
+def validate_body(value: str, maximum: int = 60_000) -> str:
+    if "\x00" in value or len(value) > maximum:
+        raise ValueError(f"Body must be at most {maximum} characters")
+    if redact_github_text(value) != value or re.search(SECRET_PATTERN, value, flags=re.IGNORECASE):
+        raise ValueError("Possible secret detected; GitHub write blocked")
+    return value.strip()
+
+
+def validate_ref(value: str, label: str = "branch") -> str:
+    clean = value.strip()
+    if not clean or len(clean) > 200 or not re.fullmatch(r"[A-Za-z0-9._/\-]+", clean):
+        raise ValueError(f"Invalid {label}")
+    if clean.startswith("/") or clean.endswith("/") or "//" in clean or ".." in clean:
+        raise ValueError(f"Invalid {label}")
+    return clean
+
+
+def validate_tag(value: str) -> str:
+    clean = value.strip()
+    if not clean or len(clean) > 150 or not re.fullmatch(r"[A-Za-z0-9._/+\-]+", clean):
+        raise ValueError("Invalid tag name")
+    if clean.startswith("/") or clean.endswith("/") or ".." in clean:
+        raise ValueError("Invalid tag name")
+    return clean
+
+
+def validate_labels(labels: list[str]) -> list[str]:
+    if len(labels) > 20:
+        raise ValueError("At most 20 labels are allowed")
+    clean: list[str] = []
+    for label in labels:
+        value = label.strip()
+        if not value or len(value) > 50 or any(ord(char) < 32 for char in value):
+            raise ValueError("Invalid label")
+        clean.append(value)
+    return list(dict.fromkeys(clean))
+
+
+def duplicate_comment(project: ProjectName, issue_number: int, body: str) -> dict[str, Any] | None:
+    comments = github_json(project, f"/issues/{issue_number}/comments", query={"per_page": 100})
+    normalized = body.strip()
+    for item in comments:
+        if str(item.get("body", "")).strip() == normalized:
+            return {
+                "ok": False,
+                "error": "Identical comment already exists",
+                "existing_comment_id": item.get("id"),
+                "html_url": item.get("html_url"),
+            }
+    return None
+
+
+def require_positive_id(value: int, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"{label} must be a positive integer")
+    return value
+
+
+def compact_user(user: Any) -> str | None:
+    return user.get("login") if isinstance(user, dict) else None
+
+
+def compact_labels(labels: Any) -> list[str]:
+    if not isinstance(labels, list):
+        return []
+    return [str(item.get("name")) for item in labels if isinstance(item, dict) and item.get("name")][:30]
+
+
+def compact_issue(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "number": item.get("number"),
+        "title": item.get("title"),
+        "state": item.get("state"),
+        "state_reason": item.get("state_reason"),
+        "author": compact_user(item.get("user")),
+        "assignees": [compact_user(user) for user in item.get("assignees", []) if compact_user(user)],
+        "labels": compact_labels(item.get("labels")),
+        "comments": item.get("comments"),
+        "created_at": item.get("created_at"),
+        "updated_at": item.get("updated_at"),
+        "closed_at": item.get("closed_at"),
+        "html_url": item.get("html_url"),
+    }
+
+
+def compact_pull(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "number": item.get("number"),
+        "title": item.get("title"),
+        "state": item.get("state"),
+        "draft": item.get("draft"),
+        "merged": item.get("merged"),
+        "mergeable": item.get("mergeable"),
+        "author": compact_user(item.get("user")),
+        "head": (item.get("head") or {}).get("ref"),
+        "head_sha": (item.get("head") or {}).get("sha"),
+        "base": (item.get("base") or {}).get("ref"),
+        "comments": item.get("comments"),
+        "review_comments": item.get("review_comments"),
+        "commits": item.get("commits"),
+        "additions": item.get("additions"),
+        "deletions": item.get("deletions"),
+        "changed_files": item.get("changed_files"),
+        "created_at": item.get("created_at"),
+        "updated_at": item.get("updated_at"),
+        "merged_at": item.get("merged_at"),
+        "html_url": item.get("html_url"),
+    }
+
+
+def compact_release(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": item.get("id"),
+        "tag_name": item.get("tag_name"),
+        "name": item.get("name"),
+        "draft": item.get("draft"),
+        "prerelease": item.get("prerelease"),
+        "target_commitish": item.get("target_commitish"),
+        "author": compact_user(item.get("author")),
+        "created_at": item.get("created_at"),
+        "published_at": item.get("published_at"),
+        "html_url": item.get("html_url"),
+        "assets": [
+            {
+                "id": asset.get("id"),
+                "name": asset.get("name"),
+                "size": asset.get("size"),
+                "download_count": asset.get("download_count"),
+                "content_type": asset.get("content_type"),
+                "browser_download_url": asset.get("browser_download_url"),
+                "created_at": asset.get("created_at"),
+            }
+            for asset in item.get("assets", [])[:50]
+            if isinstance(asset, dict)
+        ],
+    }
+
+
+def compact_run(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "display_title": item.get("display_title"),
+        "event": item.get("event"),
+        "status": item.get("status"),
+        "conclusion": item.get("conclusion"),
+        "workflow_id": item.get("workflow_id"),
+        "run_number": item.get("run_number"),
+        "run_attempt": item.get("run_attempt"),
+        "head_branch": item.get("head_branch"),
+        "head_sha": item.get("head_sha"),
+        "actor": compact_user(item.get("actor")),
+        "created_at": item.get("created_at"),
+        "updated_at": item.get("updated_at"),
+        "html_url": item.get("html_url"),
+        "artifacts_url": item.get("artifacts_url"),
+    }
+
+
+def run_git(
+    project: ProjectName,
+    arguments: list[str],
+    *,
+    input_text: str | None = None,
+    timeout: int = 45,
+    output_limit: int = 200_000,
+) -> dict:
+    config = PROJECTS.get(project)
+    if config is None:
+        return {"ok": False, "exit_code": -1, "output": "", "error": "Unknown project"}
+
+    path = config["path"]
+    if not path.is_dir():
+        return {
+            "ok": False,
+            "exit_code": -1,
+            "output": "",
+            "error": "Project directory is missing",
+        }
+
+    environment = {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "HOME": str(ROOT),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_NOSYSTEM": "0",
+    }
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path), *arguments],
+            input=input_text,
+            stdin=None if input_text is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            env=environment,
+            check=False,
+            shell=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "exit_code": -1,
+            "output": "",
+            "error": "Command timed out",
+        }
+
+    return {
+        "ok": result.returncode == 0,
+        "exit_code": result.returncode,
+        "output": result.stdout[-output_limit:],
+        "error": result.stderr[-50_000:],
+    }
+
+
+def audit(action: str, project: str, ok: bool, detail: str = "") -> None:
+    record = {
+        "time": datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "project": project,
+        "ok": ok,
+        "detail": detail[:300],
+    }
+    try:
+        with AUDIT_LOG.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def current_branch(project: ProjectName) -> tuple[bool, str]:
+    result = run_git(project, ["branch", "--show-current"])
+    if not result["ok"]:
+        return False, result["error"] or "Could not read current branch"
+    return True, result["output"].strip()
+
+
+def guard_project(
+    project: ProjectName,
+    *,
+    require_clean: bool,
+) -> tuple[bool, str]:
+    config = PROJECTS.get(project)
+    if config is None:
+        return False, "Unknown project"
+
+    ok, branch = current_branch(project)
+    if not ok:
+        return False, branch
+    if branch != config["branch"]:
+        return False, f"Blocked branch: {branch}; allowed: {config['branch']}"
+
+    if require_clean:
+        status = run_git(project, ["status", "--porcelain"])
+        if not status["ok"]:
+            return False, status["error"] or "Could not read status"
+        if status["output"].strip():
+            return False, "Working tree must be clean"
+
+    return True, branch
+
+
+def is_sensitive_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").strip().strip('"').lower()
+    parts = [part for part in normalized.split("/") if part]
+    name = parts[-1] if parts else ""
+    if any(part in SENSITIVE_NAMES or part.startswith(".env") for part in parts):
+        return True
+    return any(name.endswith(suffix) for suffix in SENSITIVE_SUFFIXES)
+
+
+def changed_paths(project: ProjectName) -> list[str]:
+    result = run_git(project, ["status", "--porcelain", "--untracked-files=all"])
+    if not result["ok"]:
+        return []
+
+    paths: list[str] = []
+    for line in result["output"].splitlines():
+        if len(line) < 4:
+            continue
+        path = line[3:]
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        paths.append(path.strip().strip('"'))
+    return paths
+
+
+@mcp.tool()
+def list_projects() -> dict:
+    """List only the registered and approved projects."""
+    return {
+        name: {
+            "path": str(config["path"]),
+            "allowed_branch": config["branch"],
+        }
+        for name, config in PROJECTS.items()
+    }
+
+
+@mcp.tool()
+def git_status(project: ProjectName) -> dict:
+    """Show the current branch and working-tree status."""
+    return run_git(project, ["status", "--short", "--branch"])
+
+
+@mcp.tool()
+def recent_commits(project: ProjectName, limit: int = 10) -> dict:
+    """Show 1 through 20 recent commits."""
+    safe_limit = max(1, min(limit, 20))
+    return run_git(
+        project,
+        [
+            "log",
+            f"-{safe_limit}",
+            "--date=iso",
+            "--pretty=format:%h | %ad | %an | %s",
+        ],
+    )
+
+
+@mcp.tool()
+def git_diff(project: ProjectName, staged: bool = False) -> dict:
+    """Show the unstaged or staged diff without modifying files."""
+    arguments = ["diff", "--no-ext-diff"]
+    if staged:
+        arguments.append("--cached")
+    return run_git(project, arguments)
+
+
+@mcp.tool()
+def list_tracked_files(
+    project: ProjectName,
+    contains: str = "",
+    limit: int = 200,
+) -> dict:
+    """List tracked files, optionally filtered by part of the path."""
+    result = run_git(project, ["ls-files"], output_limit=1_000_000)
+    if not result["ok"]:
+        return result
+
+    safe_limit = max(1, min(limit, 500))
+    query = contains.lower().strip()
+    files = [
+        line for line in result["output"].splitlines()
+        if not query or query in line.lower()
+    ]
+    result["output"] = "\n".join(files[:safe_limit])
+    return result
+
+
+@mcp.tool()
+def read_tracked_file(
+    project: ProjectName,
+    path: str,
+    start_line: int = 1,
+    maximum_lines: int = 400,
+) -> dict:
+    """Read a tracked, non-sensitive file inside an approved project."""
+    config = PROJECTS.get(project)
+    if config is None:
+        return {"ok": False, "error": "Unknown project"}
+    if not path or "\x00" in path or Path(path).is_absolute():
+        return {"ok": False, "error": "Invalid relative path"}
+    if is_sensitive_path(path):
+        return {"ok": False, "error": "Sensitive path is blocked"}
+
+    root = config["path"].resolve()
+    candidate = (root / path).resolve()
+    if root not in candidate.parents:
+        return {"ok": False, "error": "Path traversal is blocked"}
+
+    tracked = run_git(project, ["ls-files", "--error-unmatch", "--", path])
+    if not tracked["ok"]:
+        return {"ok": False, "error": "File is not tracked"}
+    if not candidate.is_file():
+        return {"ok": False, "error": "File does not exist"}
+    if candidate.stat().st_size > 1_000_000:
+        return {"ok": False, "error": "File is too large"}
+
+    lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+    safe_start = max(1, start_line)
+    safe_count = max(1, min(maximum_lines, 500))
+    selected = lines[safe_start - 1:safe_start - 1 + safe_count]
+    return {
+        "ok": True,
+        "path": path,
+        "start_line": safe_start,
+        "end_line": safe_start + len(selected) - 1,
+        "total_lines": len(lines),
+        "content": "\n".join(selected),
+    }
+
+
+@mcp.tool()
+def search_tracked_code(
+    project: ProjectName,
+    text: str,
+    maximum_results: int = 50,
+) -> dict:
+    """Search tracked project files for fixed text."""
+    if not text or len(text) > 200:
+        return {"ok": False, "error": "Search text must be 1 to 200 characters"}
+
+    safe_limit = max(1, min(maximum_results, 100))
+    result = run_git(
+        project,
+        ["grep", "-n", "-I", "--fixed-strings", "--", text],
+        output_limit=1_000_000,
+    )
+    if result["exit_code"] == 1:
+        return {"ok": True, "exit_code": 0, "output": "", "error": ""}
+    if result["ok"]:
+        result["output"] = "\n".join(result["output"].splitlines()[:safe_limit])
+    return result
+
+
+@mcp.tool()
+def validate_changes(project: ProjectName, staged: bool = False) -> dict:
+    """Run Git whitespace validation without modifying files."""
+    arguments = ["diff"]
+    if staged:
+        arguments.append("--cached")
+    arguments.append("--check")
+    return run_git(project, arguments)
+
+
+@mcp.tool()
+def sync_project(project: ProjectName) -> dict:
+    """Fetch and fast-forward only the approved branch. Modifies the local clone."""
+    with WRITE_LOCK:
+        allowed, reason = guard_project(project, require_clean=True)
+        if not allowed:
+            audit("sync", project, False, reason)
+            return {"ok": False, "error": reason}
+
+        branch = PROJECTS[project]["branch"]
+        fetch = run_git(project, ["fetch", "origin", branch], timeout=90)
+        if not fetch["ok"]:
+            audit("sync", project, False, fetch["error"])
+            return fetch
+
+        merge = run_git(project, ["merge", "--ff-only", f"origin/{branch}"])
+        audit("sync", project, merge["ok"], merge["error"])
+        return merge
+
+
+@mcp.tool()
+def apply_unified_patch(
+    project: ProjectName,
+    patch_text: str,
+    check_only: bool = True,
+) -> dict:
+    """Check or apply a unified Git patch. Set check_only=false to modify files."""
+    encoded_size = len(patch_text.encode("utf-8", errors="ignore"))
+    if not patch_text or encoded_size > MAX_PATCH_BYTES:
+        return {"ok": False, "error": "Patch must be 1 to 500000 bytes"}
+    if "\x00" in patch_text or "diff --git " not in patch_text:
+        return {"ok": False, "error": "Invalid unified Git patch"}
+    if re.search(SECRET_PATTERN, patch_text, flags=re.IGNORECASE):
+        return {"ok": False, "error": "Possible secret detected; patch blocked"}
+
+    patch_paths: list[str] = []
+    for line in patch_text.splitlines():
+        if line.startswith("+++ b/") or line.startswith("--- a/"):
+            value = line[6:].strip()
+            if value != "/dev/null":
+                patch_paths.append(value)
+
+    if any(is_sensitive_path(path) for path in patch_paths):
+        return {"ok": False, "error": "Patch touches a blocked sensitive path"}
+
+    with WRITE_LOCK:
+        allowed, reason = guard_project(project, require_clean=True)
+        if not allowed:
+            audit("apply_patch", project, False, reason)
+            return {"ok": False, "error": reason}
+
+        temporary_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                prefix="dvpatch-",
+                suffix=".diff",
+                dir=str(PATCH_TMP_DIR),
+                delete=False,
+            ) as temporary:
+                temporary.write(patch_text)
+                temporary_path = temporary.name
+
+            os.chmod(temporary_path, 0o600)
+            check = run_git(
+                project,
+                ["apply", "--check", "--whitespace=error-all", temporary_path],
+            )
+            if not check["ok"] or check_only:
+                audit("check_patch", project, check["ok"], check["error"])
+                return check
+
+            applied = run_git(
+                project,
+                ["apply", "--whitespace=error-all", temporary_path],
+            )
+            audit("apply_patch", project, applied["ok"], applied["error"])
+            return applied
+        finally:
+            if temporary_path:
+                Path(temporary_path).unlink(missing_ok=True)
+
+
+@mcp.tool()
+def commit_changes(project: ProjectName, message: str) -> dict:
+    """Validate and commit all current changes on the approved branch."""
+    clean_message = message.strip()
+    if (
+        len(clean_message) < 5
+        or len(clean_message) > 120
+        or "\n" in clean_message
+        or "\r" in clean_message
+    ):
+        return {"ok": False, "error": "Commit message must be 5 to 120 characters"}
+
+    with WRITE_LOCK:
+        allowed, reason = guard_project(project, require_clean=False)
+        if not allowed:
+            audit("commit", project, False, reason)
+            return {"ok": False, "error": reason}
+
+        paths = changed_paths(project)
+        if not paths:
+            return {"ok": False, "error": "There are no changes to commit"}
+
+        blocked = [path for path in paths if is_sensitive_path(path)]
+        if blocked:
+            return {
+                "ok": False,
+                "error": "Sensitive files are blocked",
+                "blocked_paths": blocked,
+            }
+
+        whitespace = run_git(project, ["diff", "--check"])
+        if not whitespace["ok"]:
+            return whitespace
+
+        added = run_git(project, ["add", "-A"])
+        if not added["ok"]:
+            return added
+
+        staged_check = run_git(project, ["diff", "--cached", "--check"])
+        if not staged_check["ok"]:
+            return staged_check
+
+        secret_scan = run_git(
+            project,
+            ["grep", "--cached", "-I", "-n", "-E", "-e", SECRET_PATTERN, "--", *paths],
+            output_limit=1_000,
+        )
+        if secret_scan["exit_code"] == 0:
+            audit("commit", project, False, "Secret marker detected")
+            return {
+                "ok": False,
+                "error": "Possible secret detected; commit blocked",
+            }
+        if secret_scan["exit_code"] not in (0, 1):
+            return secret_scan
+
+        committed = run_git(project, ["commit", "-m", clean_message])
+        audit("commit", project, committed["ok"], clean_message)
+        return committed
+
+
+@mcp.tool()
+def push_project(project: ProjectName) -> dict:
+    """Push the approved branch without force. Requires a clean working tree."""
+    with WRITE_LOCK:
+        allowed, reason = guard_project(project, require_clean=True)
+        if not allowed:
+            audit("push", project, False, reason)
+            return {"ok": False, "error": reason}
+
+        branch = PROJECTS[project]["branch"]
+        pushed = run_git(project, ["push", "origin", branch], timeout=90)
+        audit("push", project, pushed["ok"], pushed["error"])
+        return pushed
+
+
+@mcp.tool()
+def github_health() -> dict:
+    """Verify GitHub authentication, registered repository access, and rate limit."""
+    try:
+        token, token_info = github_installation_token()
+        registered = sorted(str(config["repo"]) for config in PROJECTS.values())
+        accessible: list[str] = []
+        for repo in registered:
+            _, raw, _ = _github_http(f"/repos/{repo}", token=token)
+            item = json.loads(raw.decode("utf-8"))
+            if item.get("full_name") == repo:
+                accessible.append(repo)
+        exact_scope = accessible == registered
+        if token_info.get("auth_mode") == "github_app":
+            _, raw, _ = _github_http("/installation/repositories?per_page=100", token=token)
+            installed = json.loads(raw.decode("utf-8"))
+            installed_repos = sorted(
+                item.get("full_name") for item in installed.get("repositories", [])
+                if isinstance(item, dict) and item.get("full_name")
+            )
+            exact_scope = installed_repos == registered
+        _, rate_raw, _ = _github_http("/rate_limit", token=token)
+        rate = json.loads(rate_raw.decode("utf-8")).get("rate", {})
+        return {
+            "ok": exact_scope, "authentication": "ok", "auth_mode": token_info.get("auth_mode"),
+            "token_expires_at": token_info.get("expires_at"),
+            "repository_selection": token_info.get("repository_selection"),
+            "permissions": token_info.get("permissions"), "repositories": accessible,
+            "scope_matches_registry": exact_scope,
+            "rate_limit": {"limit": rate.get("limit"), "remaining": rate.get("remaining"), "reset": rate.get("reset")},
+        }
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_repo_summary(project: ProjectName) -> dict:
+    """Read repository metadata and current open issue and pull request counts."""
+    try:
+        repo = github_json(project, "")
+        pulls = github_json(project, "/pulls", query={"state": "open", "per_page": 100})
+        issues = github_json(project, "/issues", query={"state": "open", "per_page": 100})
+        issue_count = sum(1 for item in issues if "pull_request" not in item)
+        return {
+            "ok": True,
+            "repository": repo.get("full_name"),
+            "private": repo.get("private"),
+            "archived": repo.get("archived"),
+            "default_branch": repo.get("default_branch"),
+            "visibility": repo.get("visibility"),
+            "open_pull_requests": len(pulls),
+            "open_issues": issue_count,
+            "pushed_at": repo.get("pushed_at"),
+            "updated_at": repo.get("updated_at"),
+            "html_url": repo.get("html_url"),
+        }
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_issues(
+    project: ProjectName,
+    state: Literal["open", "closed", "all"] = "open",
+    limit: int = 20,
+) -> dict:
+    """List repository issues, excluding pull requests."""
+    try:
+        safe_limit = max(1, min(limit, 100))
+        items = github_json(project, "/issues", query={"state": state, "per_page": 100, "sort": "updated", "direction": "desc"})
+        issues = [compact_issue(item) for item in items if "pull_request" not in item][:safe_limit]
+        return {"ok": True, "count": len(issues), "issues": issues}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_issue(project: ProjectName, issue_number: int) -> dict:
+    """Read one issue and up to 100 issue comments."""
+    try:
+        number = require_positive_id(issue_number, "issue_number")
+        issue = github_json(project, f"/issues/{number}")
+        if "pull_request" in issue:
+            return {"ok": False, "error": "The requested number belongs to a pull request"}
+        comments = github_json(project, f"/issues/{number}/comments", query={"per_page": 100})
+        return {
+            "ok": True,
+            "issue": {**compact_issue(issue), "body": issue.get("body")},
+            "comments": [
+                {
+                    "id": item.get("id"), "author": compact_user(item.get("user")),
+                    "body": item.get("body"), "created_at": item.get("created_at"),
+                    "updated_at": item.get("updated_at"), "html_url": item.get("html_url"),
+                }
+                for item in comments[:100]
+            ],
+        }
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_pull_requests(
+    project: ProjectName,
+    state: Literal["open", "closed", "all"] = "open",
+    limit: int = 20,
+) -> dict:
+    """List repository pull requests."""
+    try:
+        safe_limit = max(1, min(limit, 100))
+        items = github_json(project, "/pulls", query={"state": state, "per_page": safe_limit, "sort": "updated", "direction": "desc"})
+        pulls = [compact_pull(item) for item in items[:safe_limit]]
+        return {"ok": True, "count": len(pulls), "pull_requests": pulls}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_pull_request(project: ProjectName, pull_number: int) -> dict:
+    """Read a pull request, files, reviews, comments, checks, and commit status."""
+    try:
+        number = require_positive_id(pull_number, "pull_number")
+        pull = github_json(project, f"/pulls/{number}")
+        files = github_json(project, f"/pulls/{number}/files", query={"per_page": 100})
+        reviews = github_json(project, f"/pulls/{number}/reviews", query={"per_page": 100})
+        issue_comments = github_json(project, f"/issues/{number}/comments", query={"per_page": 100})
+        review_comments = github_json(project, f"/pulls/{number}/comments", query={"per_page": 100})
+        sha = str((pull.get("head") or {}).get("sha", ""))
+        checks = github_json(project, f"/commits/{sha}/check-runs", query={"per_page": 100}) if sha else {}
+        status = github_json(project, f"/commits/{sha}/status") if sha else {}
+        return {
+            "ok": True,
+            "pull_request": {**compact_pull(pull), "body": pull.get("body")},
+            "files": [
+                {
+                    "filename": item.get("filename"), "status": item.get("status"),
+                    "additions": item.get("additions"), "deletions": item.get("deletions"),
+                    "changes": item.get("changes"), "blob_url": item.get("blob_url"),
+                }
+                for item in files[:100]
+            ],
+            "reviews": [
+                {
+                    "id": item.get("id"), "author": compact_user(item.get("user")),
+                    "state": item.get("state"), "body": item.get("body"),
+                    "submitted_at": item.get("submitted_at"), "commit_id": item.get("commit_id"),
+                }
+                for item in reviews[:100]
+            ],
+            "issue_comments": [
+                {"id": item.get("id"), "author": compact_user(item.get("user")), "body": item.get("body"), "created_at": item.get("created_at"), "html_url": item.get("html_url")}
+                for item in issue_comments[:100]
+            ],
+            "review_comments": [
+                {"id": item.get("id"), "author": compact_user(item.get("user")), "body": item.get("body"), "path": item.get("path"), "line": item.get("line"), "created_at": item.get("created_at"), "html_url": item.get("html_url")}
+                for item in review_comments[:100]
+            ],
+            "checks": [
+                {"id": item.get("id"), "name": item.get("name"), "status": item.get("status"), "conclusion": item.get("conclusion"), "started_at": item.get("started_at"), "completed_at": item.get("completed_at"), "details_url": item.get("details_url")}
+                for item in checks.get("check_runs", [])[:100]
+            ],
+            "combined_status": status.get("state"),
+            "statuses": [
+                {"context": item.get("context"), "state": item.get("state"), "description": item.get("description"), "target_url": item.get("target_url")}
+                for item in status.get("statuses", [])[:100]
+            ],
+        }
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_releases(project: ProjectName, limit: int = 20) -> dict:
+    """List releases and their assets."""
+    try:
+        safe_limit = max(1, min(limit, 100))
+        items = github_json(project, "/releases", query={"per_page": safe_limit})
+        releases = [compact_release(item) for item in items[:safe_limit]]
+        return {"ok": True, "count": len(releases), "releases": releases}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_release(project: ProjectName, tag_name: str) -> dict:
+    """Read one release by exact tag, including release notes and assets."""
+    try:
+        tag = tag_name.strip()
+        if not tag or len(tag) > 150 or not re.fullmatch(r"[A-Za-z0-9._/+\-]+", tag):
+            return {"ok": False, "error": "Invalid tag name"}
+        item = github_json(project, "/releases/tags/" + urllib.parse.quote(tag, safe=""))
+        return {"ok": True, "release": {**compact_release(item), "body": item.get("body")}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_workflow_runs(
+    project: ProjectName,
+    branch: str = "",
+    status: str = "",
+    limit: int = 20,
+) -> dict:
+    """List GitHub Actions workflow runs with optional branch and status filters."""
+    allowed_statuses = {"", "queued", "in_progress", "completed", "requested", "waiting", "pending", "action_required", "cancelled", "failure", "neutral", "skipped", "stale", "success", "timed_out"}
+    try:
+        if status not in allowed_statuses:
+            return {"ok": False, "error": "Invalid workflow status filter"}
+        if branch and (len(branch) > 200 or not re.fullmatch(r"[A-Za-z0-9._/\-]+", branch)):
+            return {"ok": False, "error": "Invalid branch filter"}
+        safe_limit = max(1, min(limit, 100))
+        data = github_json(project, "/actions/runs", query={"branch": branch, "status": status, "per_page": safe_limit})
+        runs = [compact_run(item) for item in data.get("workflow_runs", [])[:safe_limit]]
+        return {"ok": True, "total_count": data.get("total_count"), "count": len(runs), "workflow_runs": runs}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_workflow_run(project: ProjectName, run_id: int) -> dict:
+    """Read one workflow run, its jobs, steps, and artifacts."""
+    try:
+        run = require_positive_id(run_id, "run_id")
+        item = github_json(project, f"/actions/runs/{run}")
+        jobs_data = github_json(project, f"/actions/runs/{run}/jobs", query={"per_page": 100})
+        artifacts_data = github_json(project, f"/actions/runs/{run}/artifacts", query={"per_page": 100})
+        jobs = []
+        for job in jobs_data.get("jobs", [])[:100]:
+            jobs.append({
+                "id": job.get("id"), "name": job.get("name"), "status": job.get("status"),
+                "conclusion": job.get("conclusion"), "started_at": job.get("started_at"),
+                "completed_at": job.get("completed_at"), "html_url": job.get("html_url"),
+                "steps": [
+                    {"number": step.get("number"), "name": step.get("name"), "status": step.get("status"), "conclusion": step.get("conclusion"), "started_at": step.get("started_at"), "completed_at": step.get("completed_at")}
+                    for step in job.get("steps", [])[:100]
+                ],
+            })
+        artifacts = [
+            {"id": artifact.get("id"), "name": artifact.get("name"), "size_in_bytes": artifact.get("size_in_bytes"), "expired": artifact.get("expired"), "created_at": artifact.get("created_at"), "expires_at": artifact.get("expires_at"), "archive_download_url": artifact.get("archive_download_url")}
+            for artifact in artifacts_data.get("artifacts", [])[:100]
+        ]
+        return {"ok": True, "workflow_run": compact_run(item), "jobs": jobs, "artifacts": artifacts}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_actions_log(
+    project: ProjectName,
+    run_id: int,
+    tail_lines: int = 300,
+    contains: str = "",
+) -> dict:
+    """Download a bounded Actions log archive and return redacted matching or tail lines."""
+    try:
+        run = require_positive_id(run_id, "run_id")
+        if len(contains) > 200:
+            return {"ok": False, "error": "Log filter must be at most 200 characters"}
+        safe_lines = max(1, min(tail_lines, 500))
+        repo = github_repo(project)
+        token, _ = github_installation_token()
+        _, raw, _ = _github_http(
+            f"/repos/{repo}/actions/runs/{run}/logs",
+            token=token,
+            accept="application/vnd.github+json",
+            maximum_bytes=MAX_GH_LOG_ZIP_BYTES,
+        )
+        archive = zipfile.ZipFile(io.BytesIO(raw))
+        members = [item for item in archive.infolist() if not item.is_dir()][:200]
+        if sum(item.file_size for item in members) > MAX_GH_LOG_TEXT_BYTES:
+            return {"ok": False, "error": "Expanded Actions logs exceed the configured size limit"}
+        collected: list[str] = []
+        query = contains.lower().strip()
+        for member in members:
+            if member.file_size > 5_000_000:
+                continue
+            text = archive.read(member).decode("utf-8", errors="replace")
+            for line in text.splitlines():
+                clean = redact_github_text(line)
+                if not query or query in clean.lower():
+                    collected.append(f"[{member.filename}] {clean}")
+        selected = collected[:safe_lines] if query else collected[-safe_lines:]
+        output = "\n".join(selected)
+        if len(output) > 100_000:
+            output = output[-100_000:]
+        return {
+            "ok": True,
+            "files_scanned": len(members),
+            "matching_lines": len(collected),
+            "returned_lines": len(selected),
+            "truncated": len(collected) > len(selected) or len(output) >= 100_000,
+            "output": output,
+        }
+    except zipfile.BadZipFile:
+        return {"ok": False, "error": "GitHub returned an invalid Actions log archive"}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_artifacts(project: ProjectName, run_id: int, limit: int = 50) -> dict:
+    """List artifacts produced by one workflow run."""
+    try:
+        run = require_positive_id(run_id, "run_id")
+        safe_limit = max(1, min(limit, 100))
+        data = github_json(project, f"/actions/runs/{run}/artifacts", query={"per_page": safe_limit})
+        artifacts = [
+            {"id": item.get("id"), "name": item.get("name"), "size_in_bytes": item.get("size_in_bytes"), "expired": item.get("expired"), "created_at": item.get("created_at"), "expires_at": item.get("expires_at"), "archive_download_url": item.get("archive_download_url")}
+            for item in data.get("artifacts", [])[:safe_limit]
+        ]
+        return {"ok": True, "total_count": data.get("total_count"), "count": len(artifacts), "artifacts": artifacts}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_create_issue(
+    project: ProjectName,
+    title: str,
+    body: str = "",
+    labels: list[str] = [],
+) -> dict:
+    """Create a non-duplicate issue in an approved repository."""
+    try:
+        clean_title = validate_title(title)
+        clean_body = validate_body(body)
+        clean_labels = validate_labels(labels)
+        existing = github_json(project, "/issues", query={"state": "all", "per_page": 100})
+        for item in existing:
+            if "pull_request" not in item and str(item.get("title", "")).strip().casefold() == clean_title.casefold():
+                return {"ok": False, "error": "Issue with the same title already exists", "existing_issue": compact_issue(item)}
+        with WRITE_LOCK:
+            result = github_write_json(
+                project, "/issues", method="POST",
+                body={"title": clean_title, "body": clean_body, "labels": clean_labels},
+                audit_action="github_create_issue",
+            )
+        return {"ok": True, "status": result["status"], "issue": {**compact_issue(result["data"]), "body": result["data"].get("body")}}
+    except Exception as error:
+        audit("github_create_issue", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_update_issue(
+    project: ProjectName,
+    issue_number: int,
+    title: str | None = None,
+    body: str | None = None,
+    state: Literal["open", "closed"] | None = None,
+    state_reason: Literal["completed", "not_planned", "reopened"] | None = None,
+    labels: list[str] | None = None,
+) -> dict:
+    """Update an issue. Closing always requires a valid state reason."""
+    try:
+        number = require_positive_id(issue_number, "issue_number")
+        current = github_json(project, f"/issues/{number}")
+        if "pull_request" in current:
+            return {"ok": False, "error": "The requested number belongs to a pull request"}
+        payload: dict[str, Any] = {}
+        if title is not None: payload["title"] = validate_title(title)
+        if body is not None: payload["body"] = validate_body(body)
+        if labels is not None: payload["labels"] = validate_labels(labels)
+        if state is not None:
+            payload["state"] = state
+            if state == "closed":
+                if state_reason not in {"completed", "not_planned"}:
+                    return {"ok": False, "error": "Closing an issue requires state_reason completed or not_planned"}
+                payload["state_reason"] = state_reason
+            elif state_reason == "reopened":
+                payload["state_reason"] = "reopened"
+        if not payload:
+            return {"ok": False, "error": "No issue updates were supplied"}
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/issues/{number}", method="PATCH", body=payload, audit_action="github_update_issue")
+        return {"ok": True, "status": result["status"], "issue": {**compact_issue(result["data"]), "body": result["data"].get("body")}}
+    except Exception as error:
+        audit("github_update_issue", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_comment_issue(project: ProjectName, issue_number: int, body: str) -> dict:
+    """Add a non-duplicate comment to an issue."""
+    try:
+        number = require_positive_id(issue_number, "issue_number")
+        clean_body = validate_body(body, 30_000)
+        if not clean_body:
+            return {"ok": False, "error": "Comment body cannot be empty"}
+        issue = github_json(project, f"/issues/{number}")
+        if "pull_request" in issue:
+            return {"ok": False, "error": "Use github_comment_pull_request for pull requests"}
+        duplicate = duplicate_comment(project, number, clean_body)
+        if duplicate: return duplicate
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/issues/{number}/comments", method="POST", body={"body": clean_body}, audit_action="github_comment_issue")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "comment": {"id": item.get("id"), "body": item.get("body"), "author": compact_user(item.get("user")), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_comment_issue", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_create_pull_request(
+    project: ProjectName,
+    title: str,
+    head: str,
+    base: str = "main",
+    body: str = "",
+    draft: bool = True,
+) -> dict:
+    """Create a non-duplicate pull request. New pull requests default to draft."""
+    try:
+        clean_title = validate_title(title)
+        clean_head = validate_ref(head, "head branch")
+        clean_base = validate_ref(base, "base branch")
+        clean_body = validate_body(body)
+        existing = github_json(project, "/pulls", query={"state": "open", "head": f"{github_repo(project).split('/', 1)[0]}:{clean_head}", "base": clean_base, "per_page": 100})
+        if existing:
+            return {"ok": False, "error": "An open pull request already exists for these branches", "existing_pull_request": compact_pull(existing[0])}
+        with WRITE_LOCK:
+            result = github_write_json(
+                project, "/pulls", method="POST",
+                body={"title": clean_title, "head": clean_head, "base": clean_base, "body": clean_body, "draft": bool(draft)},
+                audit_action="github_create_pull_request",
+            )
+        return {"ok": True, "status": result["status"], "pull_request": {**compact_pull(result["data"]), "body": result["data"].get("body")}}
+    except Exception as error:
+        audit("github_create_pull_request", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_update_pull_request(
+    project: ProjectName,
+    pull_number: int,
+    title: str | None = None,
+    body: str | None = None,
+    state: Literal["open", "closed"] | None = None,
+    base: str | None = None,
+    confirmation: str = "",
+) -> dict:
+    """Update a pull request. Closing requires confirmation text CLOSE PR #number."""
+    try:
+        number = require_positive_id(pull_number, "pull_number")
+        payload: dict[str, Any] = {}
+        if title is not None: payload["title"] = validate_title(title)
+        if body is not None: payload["body"] = validate_body(body)
+        if base is not None: payload["base"] = validate_ref(base, "base branch")
+        if state is not None:
+            if state == "closed" and confirmation.strip() != f"CLOSE PR #{number}":
+                return {"ok": False, "error": f"Closing requires confirmation: CLOSE PR #{number}"}
+            payload["state"] = state
+        if not payload:
+            return {"ok": False, "error": "No pull request updates were supplied"}
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/pulls/{number}", method="PATCH", body=payload, audit_action="github_update_pull_request")
+        return {"ok": True, "status": result["status"], "pull_request": {**compact_pull(result["data"]), "body": result["data"].get("body")}}
+    except Exception as error:
+        audit("github_update_pull_request", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_comment_pull_request(project: ProjectName, pull_number: int, body: str) -> dict:
+    """Add a non-duplicate general comment to a pull request."""
+    try:
+        number = require_positive_id(pull_number, "pull_number")
+        clean_body = validate_body(body, 30_000)
+        if not clean_body:
+            return {"ok": False, "error": "Comment body cannot be empty"}
+        pull = github_json(project, f"/pulls/{number}")
+        if not pull.get("number"):
+            return {"ok": False, "error": "Pull request was not found"}
+        duplicate = duplicate_comment(project, number, clean_body)
+        if duplicate: return duplicate
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/issues/{number}/comments", method="POST", body={"body": clean_body}, audit_action="github_comment_pull_request")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "comment": {"id": item.get("id"), "body": item.get("body"), "author": compact_user(item.get("user")), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_comment_pull_request", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_comment_pull_request_line(
+    project: ProjectName,
+    pull_number: int,
+    body: str,
+    commit_id: str,
+    path: str,
+    line: int,
+    side: Literal["LEFT", "RIGHT"] = "RIGHT",
+) -> dict:
+    """Add a review comment to one changed line in a pull request."""
+    try:
+        number = require_positive_id(pull_number, "pull_number")
+        clean_body = validate_body(body, 30_000)
+        if not clean_body: return {"ok": False, "error": "Comment body cannot be empty"}
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_id): return {"ok": False, "error": "commit_id must be a full 40-character SHA"}
+        clean_path = path.strip().replace("\\", "/")
+        if not clean_path or clean_path.startswith("/") or ".." in clean_path.split("/") or "\x00" in clean_path or len(clean_path) > 500:
+            return {"ok": False, "error": "Invalid review file path"}
+        clean_line = require_positive_id(line, "line")
+        existing_comments = github_json(project, f"/pulls/{number}/comments", query={"per_page": 100})
+        for item in existing_comments:
+            if (
+                str(item.get("body", "")).strip() == clean_body
+                and item.get("path") == clean_path
+                and item.get("line") == clean_line
+                and str(item.get("commit_id", "")).lower() == commit_id.lower()
+            ):
+                return {"ok": False, "error": "Identical line comment already exists", "existing_comment_id": item.get("id"), "html_url": item.get("html_url")}
+        with WRITE_LOCK:
+            result = github_write_json(
+                project, f"/pulls/{number}/comments", method="POST",
+                body={"body": clean_body, "commit_id": commit_id.lower(), "path": clean_path, "line": clean_line, "side": side},
+                audit_action="github_comment_pull_request_line",
+            )
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "comment": {"id": item.get("id"), "body": item.get("body"), "path": item.get("path"), "line": item.get("line"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_comment_pull_request_line", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_submit_pull_request_review(
+    project: ProjectName,
+    pull_number: int,
+    event: Literal["COMMENT", "APPROVE", "REQUEST_CHANGES"],
+    body: str,
+    confirmation: str,
+) -> dict:
+    """Submit a PR review after exact confirmation REVIEW PR #number."""
+    try:
+        number = require_positive_id(pull_number, "pull_number")
+        if confirmation.strip() != f"REVIEW PR #{number}":
+            return {"ok": False, "error": f"Review requires confirmation: REVIEW PR #{number}"}
+        clean_body = validate_body(body, 30_000)
+        if event == "REQUEST_CHANGES" and not clean_body:
+            return {"ok": False, "error": "Request changes requires a review body"}
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/pulls/{number}/reviews", method="POST", body={"event": event, "body": clean_body}, audit_action="github_submit_review")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "review": {"id": item.get("id"), "state": item.get("state"), "body": item.get("body"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_submit_review", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_merge_pull_request(
+    project: ProjectName,
+    pull_number: int,
+    merge_method: Literal["merge", "squash", "rebase"] = "squash",
+    commit_title: str = "",
+    commit_message: str = "",
+    confirmation: str = "",
+) -> dict:
+    """Merge a PR only after exact confirmation MERGE PR #number."""
+    try:
+        number = require_positive_id(pull_number, "pull_number")
+        if confirmation.strip() != f"MERGE PR #{number}":
+            return {"ok": False, "error": f"Merge requires confirmation: MERGE PR #{number}"}
+        pull = github_json(project, f"/pulls/{number}")
+        if pull.get("state") != "open" or pull.get("draft"):
+            return {"ok": False, "error": "Pull request must be open and not draft"}
+        if pull.get("mergeable") is False:
+            return {"ok": False, "error": "Pull request is not mergeable"}
+        payload: dict[str, Any] = {"merge_method": merge_method}
+        if commit_title: payload["commit_title"] = validate_title(commit_title, "commit_title")
+        if commit_message: payload["commit_message"] = validate_body(commit_message, 10_000)
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/pulls/{number}/merge", method="PUT", body=payload, audit_action="github_merge_pull_request")
+        data = result["data"]
+        return {"ok": bool(data.get("merged")), "status": result["status"], "merged": data.get("merged"), "message": data.get("message"), "sha": data.get("sha")}
+    except Exception as error:
+        audit("github_merge_pull_request", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_rerun_workflow(
+    project: ProjectName,
+    run_id: int,
+    failed_jobs_only: bool = True,
+    confirmation: str = "",
+) -> dict:
+    """Rerun failed jobs or a whole workflow after exact confirmation RERUN RUN id."""
+    try:
+        run = require_positive_id(run_id, "run_id")
+        if confirmation.strip() != f"RERUN RUN {run}":
+            return {"ok": False, "error": f"Rerun requires confirmation: RERUN RUN {run}"}
+        current = github_json(project, f"/actions/runs/{run}")
+        if current.get("status") != "completed":
+            return {"ok": False, "error": "Only completed workflow runs can be rerun"}
+        suffix = f"/actions/runs/{run}/rerun-failed-jobs" if failed_jobs_only else f"/actions/runs/{run}/rerun"
+        with WRITE_LOCK:
+            result = github_write_json(project, suffix, method="POST", body={}, audit_action="github_rerun_workflow")
+        return {"ok": True, "status": result["status"], "run_id": run, "failed_jobs_only": failed_jobs_only}
+    except Exception as error:
+        audit("github_rerun_workflow", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_cancel_workflow(project: ProjectName, run_id: int, confirmation: str = "") -> dict:
+    """Cancel a queued or running workflow after exact confirmation CANCEL RUN id."""
+    try:
+        run = require_positive_id(run_id, "run_id")
+        if confirmation.strip() != f"CANCEL RUN {run}":
+            return {"ok": False, "error": f"Cancellation requires confirmation: CANCEL RUN {run}"}
+        current = github_json(project, f"/actions/runs/{run}")
+        if current.get("status") == "completed":
+            return {"ok": False, "error": "Completed workflow runs cannot be cancelled"}
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/actions/runs/{run}/cancel", method="POST", body={}, audit_action="github_cancel_workflow")
+        return {"ok": True, "status": result["status"], "run_id": run}
+    except Exception as error:
+        audit("github_cancel_workflow", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_dispatch_workflow(
+    project: ProjectName,
+    workflow: str,
+    ref: str,
+    inputs: dict[str, str] = {},
+    confirmation: str = "",
+) -> dict:
+    """Dispatch an allowlisted workflow file after exact confirmation DISPATCH workflow ON ref."""
+    try:
+        clean_workflow = workflow.strip()
+        if not re.fullmatch(r"[A-Za-z0-9._\-]+\.(?:yml|yaml)", clean_workflow):
+            return {"ok": False, "error": "workflow must be a simple .yml or .yaml filename"}
+        clean_ref = validate_ref(ref, "workflow ref")
+        if confirmation.strip() != f"DISPATCH {clean_workflow} ON {clean_ref}":
+            return {"ok": False, "error": f"Dispatch requires confirmation: DISPATCH {clean_workflow} ON {clean_ref}"}
+        if len(inputs) > 20:
+            return {"ok": False, "error": "At most 20 workflow inputs are allowed"}
+        clean_inputs: dict[str, str] = {}
+        for key, value in inputs.items():
+            text_value = str(value)
+            if (
+                not re.fullmatch(r"[A-Za-z0-9_\-]{1,100}", key)
+                or len(text_value) > 1_000
+                or "\x00" in text_value
+                or redact_github_text(text_value) != text_value
+                or re.search(SECRET_PATTERN, text_value, flags=re.IGNORECASE)
+            ):
+                return {"ok": False, "error": "Invalid or sensitive workflow input"}
+            clean_inputs[key] = text_value
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/actions/workflows/{clean_workflow}/dispatches", method="POST", body={"ref": clean_ref, "inputs": clean_inputs}, audit_action="github_dispatch_workflow")
+        return {"ok": True, "status": result["status"], "workflow": clean_workflow, "ref": clean_ref}
+    except Exception as error:
+        audit("github_dispatch_workflow", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_create_release(
+    project: ProjectName,
+    tag_name: str,
+    name: str,
+    body: str = "",
+    target_commitish: str = "",
+    prerelease: bool = True,
+    publish: bool = False,
+    confirmation: str = "",
+) -> dict:
+    """Create a draft release by default. Publishing requires confirmation PUBLISH tag."""
+    try:
+        tag = validate_tag(tag_name)
+        clean_name = validate_title(name, "release name")
+        clean_body = validate_body(body, 100_000)
+        target = validate_ref(target_commitish, "target_commitish") if target_commitish else PROJECTS[project]["branch"]
+        releases = github_json(project, "/releases", query={"per_page": 100})
+        for item in releases:
+            if item.get("tag_name") == tag:
+                return {"ok": False, "error": "Release with this tag already exists", "existing_release": compact_release(item)}
+        if publish and confirmation.strip() != f"PUBLISH {tag}":
+            return {"ok": False, "error": f"Publishing requires confirmation: PUBLISH {tag}"}
+        payload = {"tag_name": tag, "name": clean_name, "body": clean_body, "target_commitish": target, "draft": not publish, "prerelease": bool(prerelease)}
+        with WRITE_LOCK:
+            result = github_write_json(project, "/releases", method="POST", body=payload, audit_action="github_create_release")
+        return {"ok": True, "status": result["status"], "release": {**compact_release(result["data"]), "body": result["data"].get("body")}}
+    except Exception as error:
+        audit("github_create_release", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_update_release(
+    project: ProjectName,
+    release_id: int,
+    name: str | None = None,
+    body: str | None = None,
+    prerelease: bool | None = None,
+    publish: bool | None = None,
+    confirmation: str = "",
+) -> dict:
+    """Update a release. Publishing a draft requires confirmation PUBLISH RELEASE id."""
+    try:
+        release = require_positive_id(release_id, "release_id")
+        current = github_json(project, f"/releases/{release}")
+        payload: dict[str, Any] = {}
+        if name is not None: payload["name"] = validate_title(name, "release name")
+        if body is not None: payload["body"] = validate_body(body, 100_000)
+        if prerelease is not None: payload["prerelease"] = bool(prerelease)
+        if publish is not None:
+            if publish and current.get("draft") and confirmation.strip() != f"PUBLISH RELEASE {release}":
+                return {"ok": False, "error": f"Publishing requires confirmation: PUBLISH RELEASE {release}"}
+            payload["draft"] = not publish
+        if not payload:
+            return {"ok": False, "error": "No release updates were supplied"}
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/releases/{release}", method="PATCH", body=payload, audit_action="github_update_release")
+        return {"ok": True, "status": result["status"], "release": {**compact_release(result["data"]), "body": result["data"].get("body")}}
+    except Exception as error:
+        audit("github_update_release", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+def main() -> None:
+    """Run the hardened local Streamable HTTP MCP transport."""
+    mcp.run(
+        transport="streamable-http",
+        host="127.0.0.1",
+        port=8787,
+        streamable_http_path="/mcp",
+        stateless_http=True,
+        json_response=True,
+    )
+
+
+if __name__ == "__main__":
+    main()

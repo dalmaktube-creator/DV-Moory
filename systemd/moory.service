@@ -1,0 +1,40 @@
+[Unit]
+Description=Moory GitHub MCP Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=moory
+Group=moory
+WorkingDirectory=/srv/moory/app
+ExecStart=/srv/moory/venv/bin/python /srv/moory/app/server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+Environment=MOORY_ROOT=/srv/moory
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/moory/app /srv/moory/config /srv/moory/.ssh
+ReadWritePaths=/srv/moory/repos /srv/moory/logs
+MemoryMax=384M
+CPUQuota=25%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
