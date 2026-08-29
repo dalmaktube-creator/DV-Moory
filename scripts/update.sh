@@ -2,7 +2,13 @@
 set -Eeuo pipefail
 [[ ${EUID} -eq 0 ]] || { echo "Run: sudo moory update" >&2; exit 1; }
 SOURCE=/opt/moory
-ROOT=/srv/moory
+INSTALL_CONFIG=/etc/moory/install.env
+[[ -r $INSTALL_CONFIG ]] || { echo "Moory install configuration was not found" >&2; exit 1; }
+set -a
+source "$INSTALL_CONFIG"
+set +a
+ROOT=${MOORY_ROOT:-/srv/moory}
+[[ $ROOT =~ ^/srv/[A-Za-z0-9][A-Za-z0-9._-]{1,63}$ && ! -L $ROOT ]] || { echo "Unsafe Moory root" >&2; exit 1; }
 [[ -d $SOURCE/.git ]] || { echo "Moory source checkout was not found at /opt/moory" >&2; exit 1; }
 BACKUP=$(mktemp -d /root/moory-update-backup.XXXXXX)
 cp -a "$ROOT/app/server.py" "$BACKUP/server.py"
