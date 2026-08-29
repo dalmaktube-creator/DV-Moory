@@ -23,6 +23,10 @@ from mcp.server import MCPServer
 ProjectName = str
 
 ROOT = Path(os.environ.get("MOORY_ROOT", "/srv/moory")).resolve()
+PORT_TEXT = os.environ.get("MOORY_PORT", "8787")
+if not PORT_TEXT.isdigit() or not 1024 <= int(PORT_TEXT) <= 65535:
+    raise ValueError("MOORY_PORT must be between 1024 and 65535")
+PORT = int(PORT_TEXT)
 REPOS_ROOT = (ROOT / "repos").resolve()
 PROJECTS_FILE = ROOT / "config/projects.json"
 
@@ -1647,7 +1651,7 @@ def main() -> None:
     mcp.run(
         transport="streamable-http",
         host="127.0.0.1",
-        port=8787,
+        port=PORT,
         streamable_http_path="/mcp",
         stateless_http=True,
         json_response=True,
