@@ -71,6 +71,27 @@ ${DOMAIN} {
     }
 }
 EOF
+HTTP3_MARKER='# Moory compatibility: disable HTTP/3 when UDP 443 is occupied'
+if ss -lunH 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)443$'; then
+  if grep -Eq '^[[:space:]]*\{' /etc/caddy/Caddyfile; then
+    echo "UDP port 443 is occupied and the existing Caddy global options need manual review" >&2
+    exit 1
+  fi
+  TMP_CADDY=$(mktemp)
+  {
+    cat <<'EOF'
+{
+    servers {
+        protocols h1 h2
+    }
+}
+# Moory compatibility: disable HTTP/3 when UDP 443 is occupied
+EOF
+    cat /etc/caddy/Caddyfile
+  } > "$TMP_CADDY"
+  install -o root -g root -m 644 "$TMP_CADDY" /etc/caddy/Caddyfile
+  rm -f "$TMP_CADDY"
+fi
 IMPORT_LINE='import /etc/caddy/conf.d/*.caddy'
 if ! grep -Fqx "$IMPORT_LINE" /etc/caddy/Caddyfile; then
   cp -a /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.backup-$(date +%Y%m%d-%H%M%S)"
