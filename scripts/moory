@@ -215,7 +215,7 @@ safe_fetch_menu() {
 }
 backup_config() {
   need_root; local out="/root/moory-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
-  tar --exclude='*.pem' --exclude='github-token' --exclude='id_*' --exclude='repos' -czf "$out" -C "$ROOT" config logs 2>/dev/null || true
+  tar -czf "$out" -C "$ROOT" config/projects.json
   chmod 600 "$out"; ok "Non-secret backup created: $out"
 }
 
