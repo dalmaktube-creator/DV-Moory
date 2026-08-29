@@ -7,13 +7,13 @@ Wants=network-online.target
 Type=simple
 User=moory
 Group=moory
-WorkingDirectory=/srv/moory/app
-ExecStart=/srv/moory/venv/bin/python /srv/moory/app/server.py
+WorkingDirectory=@MOORY_ROOT@/app
+ExecStart=@MOORY_ROOT@/venv/bin/python @MOORY_ROOT@/app/server.py
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
 UMask=0077
-Environment=MOORY_ROOT=/srv/moory
+EnvironmentFile=/etc/moory/install.env
 
 NoNewPrivileges=true
 PrivateTmp=true
@@ -30,8 +30,8 @@ LockPersonality=true
 RestrictRealtime=true
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadOnlyPaths=/srv/moory/app /srv/moory/config /srv/moory/.ssh
-ReadWritePaths=/srv/moory/repos /srv/moory/logs
+ReadOnlyPaths=@MOORY_ROOT@/app @MOORY_ROOT@/config @MOORY_ROOT@/.ssh
+ReadWritePaths=@MOORY_ROOT@/repos @MOORY_ROOT@/logs
 MemoryMax=384M
 CPUQuota=25%
 TasksMax=64
