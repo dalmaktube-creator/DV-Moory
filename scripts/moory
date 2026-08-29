@@ -34,6 +34,14 @@ header() {
   line
 }
 footer() { printf "${C_BLUE}╚══════════════════════════════════════════════════════════════╝${C_RESET}\n"; }
+line() { printf "${C_BLUE}--------------------------------------------------------------${C_RESET}\n"; }
+header() {
+  clear 2>/dev/null || true
+  printf "\n  ${C_BOLD}${C_CYAN}MOORY${C_RESET}\n"
+  printf "  ${C_DIM}Self-hosted GitHub to MCP control center${C_RESET}\n\n"
+  line
+}
+footer() { line; }
 ok() { printf "${C_GREEN}✔ %s${C_RESET}\n" "$*"; }
 warn() { printf "${C_YELLOW}⚠ %s${C_RESET}\n" "$*"; }
 error() { printf "${C_RED}✘ %s${C_RESET}\n" "$*" >&2; }
