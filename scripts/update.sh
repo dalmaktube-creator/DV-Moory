@@ -20,8 +20,12 @@ git -C "$SOURCE" pull --ff-only origin main
 install -o moory -g moory -m 640 "$SOURCE/src/moory/server.py" "$ROOT/app/server.py"
 install -o root -g root -m 755 "$SOURCE/scripts/moory" /usr/local/bin/moory
 install -o root -g root -m 755 "$SOURCE/scripts/moory-setup" /usr/local/bin/moory-setup
+install -o root -g root -m 755 "$SOURCE/scripts/configure-caddy.sh" /usr/local/bin/moory-configure-caddy
 install -o root -g root -m 755 "$SOURCE/scripts/update.sh" /usr/local/lib/moory/update.sh
-install -o root -g root -m 644 "$SOURCE/systemd/moory.service" /etc/systemd/system/moory.service
+install -o root -g root -m 755 "$SOURCE/scripts/uninstall.sh" /usr/local/lib/moory/uninstall.sh
+install -o root -g root -m 755 "$SOURCE/scripts/healthcheck.sh" /usr/local/lib/moory/healthcheck.sh
+sed "s|@MOORY_ROOT@|$ROOT|g" "$SOURCE/systemd/moory.service" > /etc/systemd/system/moory.service
+chmod 644 /etc/systemd/system/moory.service
 "$ROOT/venv/bin/python" -m py_compile "$ROOT/app/server.py"
 systemctl daemon-reload
 systemctl restart moory
