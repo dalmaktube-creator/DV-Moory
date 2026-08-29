@@ -38,6 +38,7 @@ install -o root -g root -m 755 "$SOURCE/scripts/update.sh" /usr/local/lib/moory/
 install -o root -g root -m 755 "$SOURCE/scripts/uninstall.sh" /usr/local/lib/moory/uninstall.sh
 install -o root -g root -m 755 "$SOURCE/scripts/healthcheck.sh" /usr/local/lib/moory/healthcheck.sh
 install -o root -g root -m 755 "$SOURCE/scripts/fetch.sh" /usr/local/lib/moory/fetch.sh
+install -o root -g root -m 755 "$SOURCE/scripts/restore.sh" /usr/local/lib/moory/restore.sh
 sed "s|@MOORY_ROOT@|$ROOT|g" "$SOURCE/systemd/moory.service" > /etc/systemd/system/moory.service
 chmod 644 /etc/systemd/system/moory.service
 install -o root -g root -m 644 "$SOURCE/systemd/moory-fetch.service" /etc/systemd/system/moory-fetch.service
