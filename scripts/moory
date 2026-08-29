@@ -197,6 +197,22 @@ rotate_token() {
   systemctl daemon-reload; systemctl restart caddy
   ok "Bearer token rotated. Reconnect Moory in Notion."
 }
+
+safe_fetch_menu() {
+  need_root; header
+  printf "${C_BOLD}SAFE BACKGROUND FETCH${C_RESET}\n\n"
+  if systemctl is-enabled --quiet moory-fetch.timer 2>/dev/null; then ok "Automatic fetch is enabled"; else info "Automatic fetch is disabled"; fi
+  printf "\n  1) Fetch all repositories now\n  2) Enable fetch every 15 minutes\n  3) Disable background fetch\n  0) Back\n"
+  local choice
+  choice=$(ask "Choose an option")
+  case "$choice" in
+    1) /usr/local/lib/moory/fetch.sh;;
+    2) systemctl enable --now moory-fetch.timer; ok "Safe background fetch enabled";;
+    3) systemctl disable --now moory-fetch.timer; ok "Safe background fetch disabled";;
+    0) return;;
+    *) warn "Invalid option";;
+  esac
+}
 backup_config() {
   need_root; local out="/root/moory-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
   tar --exclude='*.pem' --exclude='github-token' --exclude='id_*' --exclude='repos' -czf "$out" -C "$ROOT" config logs 2>/dev/null || true
