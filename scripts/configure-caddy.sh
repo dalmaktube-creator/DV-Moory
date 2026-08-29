@@ -26,6 +26,20 @@ if ! command -v caddy >/dev/null; then
   apt-get install -y caddy
 fi
 
+BACKUP_DIR=$(mktemp -d /root/moory-endpoint-backup.XXXXXX)
+tar --ignore-failed-read -C / -czf "$BACKUP_DIR/config.tar.gz" etc/moory etc/caddy/Caddyfile etc/caddy/conf.d/moory.caddy etc/systemd/system/caddy.service.d/moory.conf 2>/dev/null || true
+rollback() {
+  rm -rf /etc/moory
+  rm -f /etc/caddy/conf.d/moory.caddy
+  rm -f /etc/systemd/system/caddy.service.d/moory.conf
+  tar -C / -xzf "$BACKUP_DIR/config.tar.gz" 2>/dev/null || true
+  systemctl daemon-reload
+  systemctl restart moory.service 2>/dev/null || true
+  systemctl restart caddy 2>/dev/null || true
+  rm -rf "$BACKUP_DIR"
+}
+trap rollback ERR
+
 install -d -o root -g moory -m 750 /etc/moory
 cat > "$INSTALL_CONFIG" <<EOF
 MOORY_ROOT=$CURRENT_ROOT
