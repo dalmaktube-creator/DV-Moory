@@ -372,10 +372,6 @@ def compact_user(user: Any) -> str | None:
     return user.get("login") if isinstance(user, dict) else None
 
 
-def omit_none(values: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in values.items() if value is not None}
-
-
 def compact_labels(labels: Any) -> list[str]:
     if not isinstance(labels, list):
         return []
