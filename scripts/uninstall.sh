@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT=/srv/moory
+INSTALL_CONFIG=/etc/moory/install.env
+if [[ -r $INSTALL_CONFIG ]]; then
+  set -a
+  source "$INSTALL_CONFIG"
+  set +a
+fi
+ROOT=${MOORY_ROOT:-/srv/moory}
 SOURCE=/opt/moory
 RESET='\033[0m'; BOLD='\033[1m'; RED='\033[38;5;203m'; YELLOW='\033[38;5;220m'; GREEN='\033[38;5;82m'
 
