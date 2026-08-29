@@ -87,5 +87,7 @@ caddy validate --config /etc/caddy/Caddyfile
 systemctl daemon-reload
 systemctl restart moory.service
 systemctl restart caddy
+trap - ERR
+rm -rf "$BACKUP_DIR"
 printf '\033[38;5;82m✔ Secure endpoint configured: https://%s/mcp\033[0m\n' "$DOMAIN"
 printf 'Caddy will automatically request and renew the SSL certificate.\n'
