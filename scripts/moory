@@ -247,7 +247,7 @@ main_menu() {
     header
     printf "${C_WHITE}  1${C_RESET}) ${C_GREEN}System status${C_RESET}             ${C_WHITE}7${C_RESET}) Restart MCP service\n"
     printf "${C_WHITE}  2${C_RESET}) Add repository             ${C_WHITE}8${C_RESET}) View service logs\n"
-    printf "${C_WHITE}  3${C_RESET}) List repositories          ${C_WHITE}9${C_RESET}) Backup configuration\n"
+    printf "${C_WHITE}  3${C_RESET}) List repositories          ${C_WHITE}9${C_RESET}) Backup & restore\n"
     printf "${C_WHITE}  4${C_RESET}) Remove repository         ${C_WHITE}10${C_RESET}) Rotate Bearer token\n"
     printf "${C_WHITE}  5${C_RESET}) GitHub authentication     ${C_WHITE}11${C_RESET}) Update Moory\n"
     printf "${C_WHITE}  6${C_RESET}) Notion connection info    ${C_WHITE}12${C_RESET}) Domain, port & HTTPS\n"
@@ -259,7 +259,7 @@ main_menu() {
       1) system_status; pause;; 2) add_project; pause;; 3) list_projects; pause;;
       4) remove_project; pause;; 5) /usr/local/bin/moory-setup; pause;;
       6) show_connection; pause;; 7) restart_service; pause;; 8) show_logs; pause;;
-      9) backup_config; pause;; 10) rotate_token; pause;; 11) /usr/local/lib/moory/update.sh; pause;;
+      9) backup_restore_menu; pause;; 10) rotate_token; pause;; 11) /usr/local/lib/moory/update.sh; pause;;
       12) configure_endpoint; pause;; 13) /usr/local/lib/moory/uninstall.sh; exit 0;;
       14) safe_fetch_menu; pause;;
       0) clear 2>/dev/null || true; exit 0;; *) warn "Invalid option"; sleep 1;;
@@ -268,6 +268,6 @@ main_menu() {
 }
 
 case ${1:-menu} in
-  menu) main_menu;; status) system_status;; add) add_project;; list) list_projects;; remove) remove_project;; logs) show_logs;; restart) restart_service;; connection) show_connection;; fetch) safe_fetch_menu;; backup) backup_config;; rotate-token) rotate_token;;
-  *) echo "Usage: moory [menu|status|add|list|remove|logs|restart|connection|fetch|backup|rotate-token]"; exit 2;;
+  menu) main_menu;; status) system_status;; add) add_project;; list) list_projects;; remove) remove_project;; logs) show_logs;; restart) restart_service;; connection) show_connection;; fetch) safe_fetch_menu;; backup) backup_config;; restore) restore_config;; rotate-token) rotate_token;;
+  *) echo "Usage: moory [menu|status|add|list|remove|logs|restart|connection|fetch|backup|restore|rotate-token]"; exit 2;;
 esac
