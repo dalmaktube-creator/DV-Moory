@@ -20,7 +20,7 @@ printf "${RED}║${RESET}  ${BOLD}${RED}FULL MOORY UNINSTALL${RESET}            
 printf "${RED}╚══════════════════════════════════════════════════════════════╝${RESET}\n\n"
 printf "${YELLOW}${BOLD}WARNING:${RESET}\n"
 printf "  • Moory services, configuration, logs and credentials will be deleted.\n"
-printf "  • Every local project clone under /srv/moory/repos will be deleted.\n"
+printf "  • Every local project clone under %s/repos will be deleted.\n" "$ROOT"
 printf "  • Any local change or commit that was not pushed will be lost.\n"
 printf "  • GitHub repositories themselves will NOT be deleted.\n"
 printf "  • The separate legacy /srv/dv-dev bridge will NOT be changed.\n\n"
@@ -70,7 +70,8 @@ if [[ $CONFIRMATION != YES ]]; then
   exit 0
 fi
 
-[[ $(realpath -m "$ROOT") == /srv/moory ]] || { echo "Unsafe Moory root" >&2; exit 1; }
+[[ $ROOT =~ ^/srv/[A-Za-z0-9][A-Za-z0-9._-]{1,63}$ ]] || { echo "Unsafe Moory root" >&2; exit 1; }
+[[ $(realpath -m "$ROOT") == "$ROOT" ]] || { echo "Unsafe Moory root" >&2; exit 1; }
 [[ $(realpath -m "$SOURCE") == /opt/moory ]] || { echo "Unsafe Moory source" >&2; exit 1; }
 [[ ! -L "$ROOT" && ! -L "$SOURCE" ]] || { echo "Refusing to remove symbolic-link roots" >&2; exit 1; }
 
@@ -84,7 +85,7 @@ if command -v caddy >/dev/null && [[ -f /etc/caddy/Caddyfile ]]; then
   caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 && systemctl reload caddy 2>/dev/null || true
 fi
 
-rm -rf --one-file-system /srv/moory
+rm -rf --one-file-system "$ROOT"
 rm -rf --one-file-system /opt/moory
 userdel moory 2>/dev/null || true
 rm -f /usr/local/bin/moory /usr/local/bin/moory-setup /usr/local/bin/moory-configure-caddy
