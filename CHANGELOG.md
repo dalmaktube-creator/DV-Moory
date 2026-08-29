@@ -2,6 +2,8 @@
 
 ## 1.0.0
 
+- Security audit hardening for bootstrap paths, backups, symlink reads and patch rename/copy metadata.
+
 - Added guarded GitHub write operations for issues, PRs, reviews, workflow runs, and releases.
 - Added exact confirmation gates, duplicate prevention, and write secret scanning.
 - Verified real GitHub App read/write access by safely closing a stale completed issue.

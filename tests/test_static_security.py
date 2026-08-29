@@ -11,6 +11,9 @@ required = [
     "PROJECTS_FILE",
     'GITHUB_AUTH_MODE',
     'fine_grained_pat',
+    'Symbolic links are not readable',
+    'rename to ',
+    'copy to ',
     "GitHub API path is not allowlisted",
     "github_merge_pull_request",
     "github_get_actions_log",
@@ -31,3 +34,10 @@ for forbidden in [
     assert forbidden not in source, forbidden
 
 print("Static security checks passed")
+
+bootstrap = (root / "install.sh").read_text(encoding="utf-8")
+menu = (root / "scripts/moory").read_text(encoding="utf-8")
+assert "MOORY_SOURCE_DIR" not in bootstrap
+assert "rm -rf /opt/moory" in bootstrap
+assert "--exclude='github-token'" in menu
+assert "Project name is already registered" in menu
