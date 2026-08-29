@@ -36,6 +36,7 @@ chown moory:moory "$ROOT/.ssh/known_hosts"; chmod 600 "$ROOT/.ssh/known_hosts"
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/moory" /usr/local/bin/moory
 install -d -o root -g root -m 755 /usr/local/lib/moory
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/update.sh" /usr/local/lib/moory/update.sh
+install -o root -g root -m 755 "$SOURCE_DIR/scripts/uninstall.sh" /usr/local/lib/moory/uninstall.sh
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/moory-setup" /usr/local/bin/moory-setup
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/configure-caddy.sh" /usr/local/bin/moory-configure-caddy
 install -o root -g root -m 644 "$SOURCE_DIR/systemd/moory.service" /etc/systemd/system/moory.service

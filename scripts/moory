@@ -189,6 +189,7 @@ main_menu() {
     printf "${C_WHITE}  4${C_RESET}) Remove repository         ${C_WHITE}10${C_RESET}) Rotate Bearer token\n"
     printf "${C_WHITE}  5${C_RESET}) GitHub authentication     ${C_WHITE}11${C_RESET}) Update Moory\n"
     printf "${C_WHITE}  6${C_RESET}) Notion connection info     ${C_WHITE}0${C_RESET}) Exit\n"
+    printf "${C_WHITE} 12${C_RESET}) ${C_RED}Full uninstall (deletes local clones)${C_RESET}\n"
     footer
     local choice; choice=$(ask "Choose an option")
     case "$choice" in
@@ -196,6 +197,7 @@ main_menu() {
       4) remove_project; pause;; 5) /usr/local/bin/moory-setup; pause;;
       6) show_connection; pause;; 7) restart_service; pause;; 8) show_logs; pause;;
       9) backup_config; pause;; 10) rotate_token; pause;; 11) /usr/local/lib/moory/update.sh; pause;;
+      12) /usr/local/lib/moory/uninstall.sh; exit 0;;
       0) clear 2>/dev/null || true; exit 0;; *) warn "Invalid option"; sleep 1;;
     esac
   done
