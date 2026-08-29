@@ -1062,15 +1062,26 @@ def github_get_pull_request(project: ProjectName, pull_number: int) -> dict:
     try:
         number = require_positive_id(pull_number, "pull_number")
         pull = github_json(project, f"/pulls/{number}")
-        files = github_json(project, f"/pulls/{number}/files", query={"per_page": 100})
-        reviews = github_json(project, f"/pulls/{number}/reviews", query={"per_page": 100})
-        issue_comments = github_json(project, f"/issues/{number}/comments", query={"per_page": 100})
-        review_comments = github_json(project, f"/pulls/{number}/comments", query={"per_page": 100})
+        unavailable: dict[str, str] = {}
+
+        def optional(name: str, suffix: str, default: Any, query: dict[str, Any] | None = None) -> Any:
+            try:
+                return github_json(project, suffix, query=query)
+            except Exception as error:
+                unavailable[name] = redact_github_text(str(error))[:300]
+                return default
+
+        files = optional("files", f"/pulls/{number}/files", [], {"per_page": 100})
+        reviews = optional("reviews", f"/pulls/{number}/reviews", [], {"per_page": 100})
+        issue_comments = optional("issue_comments", f"/issues/{number}/comments", [], {"per_page": 100})
+        review_comments = optional("review_comments", f"/pulls/{number}/comments", [], {"per_page": 100})
         sha = str((pull.get("head") or {}).get("sha", ""))
-        checks = github_json(project, f"/commits/{sha}/check-runs", query={"per_page": 100}) if sha else {}
-        status = github_json(project, f"/commits/{sha}/status") if sha else {}
+        checks = optional("checks", f"/commits/{sha}/check-runs", {}, {"per_page": 100}) if sha else {}
+        status = optional("statuses", f"/commits/{sha}/status", {}) if sha else {}
         return {
             "ok": True,
+            "partial": bool(unavailable),
+            "unavailable": unavailable,
             "pull_request": {**compact_pull(pull), "body": pull.get("body")},
             "files": [
                 {
