@@ -56,7 +56,7 @@ system_status() {
   header
   printf "${C_BOLD}SYSTEM STATUS${C_RESET}\n\n"
   if systemctl is-active --quiet "$SERVICE"; then ok "MCP service is active"; else error "MCP service is not active"; fi
-  if ss -lnt 2>/dev/null | grep -q '127.0.0.1:8787'; then ok "Local MCP port 8787 is listening"; else warn "Port 8787 is not listening"; fi
+  if ss -lnt 2>/dev/null | grep -q "127.0.0.1:${PORT}"; then ok "Local MCP port $PORT is listening"; else warn "Port $PORT is not listening"; fi
   if systemctl is-active --quiet caddy 2>/dev/null; then ok "Caddy is active"; else warn "Caddy is not active"; fi
   if [[ -r $PROJECTS_FILE ]]; then
     local count; count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$PROJECTS_FILE" 2>/dev/null || echo 0)
