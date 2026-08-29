@@ -74,10 +74,13 @@ install -d -o root -g root -m 755 /usr/local/lib/moory
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/update.sh" /usr/local/lib/moory/update.sh
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/uninstall.sh" /usr/local/lib/moory/uninstall.sh
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/healthcheck.sh" /usr/local/lib/moory/healthcheck.sh
+install -o root -g root -m 755 "$SOURCE_DIR/scripts/fetch.sh" /usr/local/lib/moory/fetch.sh
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/moory-setup" /usr/local/bin/moory-setup
 install -o root -g root -m 755 "$SOURCE_DIR/scripts/configure-caddy.sh" /usr/local/bin/moory-configure-caddy
 sed "s|@MOORY_ROOT@|$ROOT|g" "$SOURCE_DIR/systemd/moory.service" > /etc/systemd/system/moory.service
 chmod 644 /etc/systemd/system/moory.service
+install -o root -g root -m 644 "$SOURCE_DIR/systemd/moory-fetch.service" /etc/systemd/system/moory-fetch.service
+install -o root -g root -m 644 "$SOURCE_DIR/systemd/moory-fetch.timer" /etc/systemd/system/moory-fetch.timer
 systemctl daemon-reload
 
 MOORY_ROOT="$ROOT" MOORY_PORT="$PORT" MOORY_DOMAIN="$DOMAIN" /usr/local/bin/moory-setup
