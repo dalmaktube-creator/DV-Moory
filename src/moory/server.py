@@ -901,6 +901,54 @@ def worker_context(
 
 
 @mcp.tool()
+def prepare_change_context(
+    project: ProjectName,
+    objective: str,
+    search_terms: list[str],
+    detail: Literal["summary", "evidence", "full"] = "summary",
+    limit: int = 20,
+) -> dict:
+    """Search several bounded terms in one call and rank the files that deserve exact reads before editing."""
+    clean_objective = objective.strip()
+    if not clean_objective or len(clean_objective) > 500:
+        return {"ok": False, "error": "Objective must be 1 to 500 characters"}
+    if detail not in DETAIL_LEVELS:
+        return {"ok": False, "error": "Invalid detail level"}
+    terms = list(dict.fromkeys(term.strip() for term in search_terms if term.strip()))
+    if not terms or len(terms) > 8 or any(len(term) > 200 for term in terms):
+        return {"ok": False, "error": "Provide 1 to 8 search terms, each at most 200 characters"}
+    safe_limit = max(1, min(limit, 50))
+    searches: list[dict[str, Any]] = []
+    scores: dict[str, int] = {}
+    unavailable: dict[str, str] = {}
+    truncated = False
+    for term in terms:
+        result = worker_context(project, operation="search", query=term, detail=detail, limit=safe_limit)
+        if not result.get("ok"):
+            unavailable[term] = str(result.get("error", "Search unavailable"))[:300]
+            continue
+        searches.append({"term": term, "matches": result.get("matches", []), "total_matches": result.get("total_matches", 0)})
+        truncated = truncated or bool(result.get("truncated"))
+        for match in result.get("matches", []):
+            path = str(match.get("path", ""))
+            if path:
+                scores[path] = scores.get(path, 0) + 1
+    ranked = [{"path": path, "score": score} for path, score in sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:safe_limit]]
+    return {
+        "ok": True,
+        "partial": bool(unavailable),
+        "objective": clean_objective,
+        "detail": detail,
+        "available_detail_levels": list(DETAIL_LEVELS),
+        "searches": searches,
+        "ranked_files": ranked,
+        "truncated": truncated,
+        "unavailable": unavailable,
+        "next_recommended_action": "Read exact ranges in the top-ranked files before generating a patch.",
+    }
+
+
+@mcp.tool()
 def worker_benchmark(project: ProjectName, query: str = "") -> dict:
     """Measure output bytes, elapsed time, and call reduction; bytes are only a token-use proxy."""
     if len(query) > 200:
