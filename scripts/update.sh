@@ -11,6 +11,10 @@ ROOT=${MOORY_ROOT:-/srv/moory}
 [[ $ROOT =~ ^/srv/[A-Za-z0-9][A-Za-z0-9._-]{1,63}$ && ! -L $ROOT ]] || { echo "Unsafe Moory root" >&2; exit 1; }
 [[ -d $SOURCE/.git ]] || { echo "Moory source checkout was not found at /opt/moory" >&2; exit 1; }
 BACKUP=$(mktemp -d /root/moory-update-backup.XXXXXX)
+NEXT_VENV=$(mktemp -d "$ROOT/.venv-next.XXXXXX")
+PREVIOUS_VENV="$ROOT/.venv-previous"
+VENV_SWAPPED=0
+rm -rf "$PREVIOUS_VENV"
 cp -a "$ROOT/app/server.py" "$BACKUP/server.py"
 cp -a /usr/local/bin/moory "$BACKUP/moory"
 cp -a /usr/local/bin/moory-setup "$BACKUP/moory-setup"
