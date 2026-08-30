@@ -1165,6 +1165,7 @@ def apply_change_set(
     project: ProjectName,
     patch_text: str,
     check_only: bool = True,
+    validation_profile: Literal["whitespace", "static"] = "static",
 ) -> dict:
     """Preflight, apply, validate, and summarize one tracked-file change set with rollback on validation failure."""
     if "--- /dev/null" in patch_text or "rename from " in patch_text or "copy from " in patch_text:
