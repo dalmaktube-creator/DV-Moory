@@ -71,6 +71,10 @@ ${DOMAIN} {
     respond @unauthorized 401
     reverse_proxy 127.0.0.1:${PORT} {
         header_up Host 127.0.0.1:${PORT}
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 30s
+        }
     }
 }
 EOF
