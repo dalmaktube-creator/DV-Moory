@@ -66,6 +66,7 @@ uninstall = (root / "scripts/uninstall.sh").read_text(encoding="utf-8")
 restore = (root / "scripts/restore.sh").read_text(encoding="utf-8")
 caddy = (root / "scripts/configure-caddy.sh").read_text(encoding="utf-8")
 fetch = (root / "scripts/fetch.sh").read_text(encoding="utf-8")
+health = (root / "scripts/healthcheck.sh").read_text(encoding="utf-8")
 assert "MOORY_SOURCE_DIR" not in bootstrap
 assert "rm -rf /opt/moory" in bootstrap
 assert "Moory currently supports Ubuntu 24.04 only." in bootstrap
