@@ -3578,6 +3578,53 @@ def github_list_repository_invitations(project: ProjectName, limit: int = 50, pa
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_rulesets(project: ProjectName, include_parents: bool = True, limit: int = 50, page: int = 1) -> dict:
+    """List repository rulesets, optionally including inherited rulesets."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/rulesets", query={"includes_parents": str(bool(include_parents)).lower(), "per_page": safe_limit, "page": safe_page})
+        rulesets = [{"id": item.get("id"), "name": item.get("name"), "target": item.get("target"), "source_type": item.get("source_type"), "source": item.get("source"), "enforcement": item.get("enforcement"), "node_id": item.get("node_id"), "links": item.get("_links")} for item in items[:safe_limit]]
+        return {"ok": True, "count": len(rulesets), "page": safe_page, "truncated": len(rulesets) == safe_limit, "rulesets": rulesets}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_ruleset(project: ProjectName, ruleset_id: int, include_parents: bool = True) -> dict:
+    """Read one repository ruleset."""
+    try:
+        rid = require_positive_id(ruleset_id, "ruleset id")
+        item = github_json(project, f"/rulesets/{rid}", query={"includes_parents": str(bool(include_parents)).lower()})
+        return {"ok": True, "ruleset": item}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_upsert_ruleset(project: ProjectName, name: str, target: Literal["branch", "tag", "push"], enforcement: Literal["disabled", "active", "evaluate"], conditions: dict[str, Any], rules: list[dict[str, Any]], bypass_actors: list[dict[str, Any]] = [], ruleset_id: int = 0, confirmation: str = "") -> dict:
+    """Create or update a repository ruleset after exact confirmation."""
+    try:
+        clean_name = validate_title(name, "ruleset name")
+        if len(rules) > 100 or len(bypass_actors) > 100: return {"ok": False, "error": "Ruleset lists are too large"}
+        encoded = json.dumps({"conditions": conditions, "rules": rules, "bypass_actors": bypass_actors}, separators=(",", ":"))
+        if len(encoded) > 200_000 or redact_github_text(encoded) != encoded: return {"ok": False, "error": "Invalid, oversized, or sensitive ruleset payload"}
+        payload: dict[str, Any] = {"name": clean_name, "target": target, "enforcement": enforcement, "conditions": conditions, "rules": rules}
+        if bypass_actors: payload["bypass_actors"] = bypass_actors
+        if ruleset_id:
+            rid = require_positive_id(ruleset_id, "ruleset id")
+            required = f"UPDATE RULESET {rid}"
+            suffix = f"/rulesets/{rid}"; method: Literal["POST", "PUT"] = "PUT"
+        else:
+            required = f"CREATE RULESET {clean_name}"
+            suffix = "/rulesets"; method = "POST"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Ruleset change requires confirmation: {required}"}
+        with WRITE_LOCK: result = github_write_json(project, suffix, method=method, body=payload, audit_action="github_upsert_ruleset")
+        return {"ok": True, "status": result["status"], "ruleset": result["data"]}
+    except Exception as error:
+        audit("github_upsert_ruleset", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
