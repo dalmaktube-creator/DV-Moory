@@ -90,6 +90,20 @@ required = [
     "github_list_artifact_metadata",
     "github_create_artifact_storage_record",
     "github_create_artifact_deployment_record",
+    "github_list_labels",
+    "github_upsert_label",
+    "github_list_milestones",
+    "github_upsert_milestone",
+    "github_get_requested_reviewers",
+    "github_request_pull_request_reviewers",
+    "github_add_issue_assignees",
+    "github_list_discussions",
+    "github_get_discussion",
+    "github_create_discussion",
+    "github_comment_discussion",
+    "github_update_discussion",
+    "github_get_pull_request_queue_state",
+    "github_set_pull_request_queue_state",
 ]
 for value in required:
     assert value in source, value

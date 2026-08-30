@@ -144,3 +144,27 @@ with tempfile.TemporaryDirectory() as temporary:
 
     blocked_artifact_deploy = module.github_create_artifact_deployment_record("demo", "artifact", valid_digest, "production", "web", confirmation="")
     assert not blocked_artifact_deploy["ok"] and "DEPLOY ARTIFACT artifact TO production" in blocked_artifact_deploy["error"]
+
+    blocked_label = module.github_upsert_label("demo", "priority", "ff0000", confirmation="")
+    assert not blocked_label["ok"] and "UPSERT LABEL priority" in blocked_label["error"]
+
+    blocked_milestone = module.github_upsert_milestone("demo", "v2", confirmation="")
+    assert not blocked_milestone["ok"] and "UPSERT MILESTONE v2" in blocked_milestone["error"]
+
+    blocked_reviewers = module.github_request_pull_request_reviewers("demo", 1, ["octocat"], confirmation="")
+    assert not blocked_reviewers["ok"] and "REQUEST REVIEWERS PR #1" in blocked_reviewers["error"]
+
+    blocked_assignees = module.github_add_issue_assignees("demo", 1, ["octocat"], confirmation="")
+    assert not blocked_assignees["ok"] and "ASSIGN ISSUE #1" in blocked_assignees["error"]
+
+    blocked_discussion = module.github_create_discussion("demo", "DIC_test", "Test", "Safe body", confirmation="")
+    assert not blocked_discussion["ok"] and "CREATE DISCUSSION Test" in blocked_discussion["error"]
+
+    blocked_comment = module.github_comment_discussion("demo", "D_test", "Safe comment", confirmation="")
+    assert not blocked_comment["ok"] and "COMMENT DISCUSSION D_test" in blocked_comment["error"]
+
+    blocked_update_discussion = module.github_update_discussion("demo", "D_test", title="Updated", confirmation="")
+    assert not blocked_update_discussion["ok"] and "UPDATE DISCUSSION D_test" in blocked_update_discussion["error"]
+
+    blocked_queue = module.github_set_pull_request_queue_state("demo", 1, "enqueue", confirmation="")
+    assert not blocked_queue["ok"] and "ENQUEUE PR #1" in blocked_queue["error"]

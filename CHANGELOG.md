@@ -2,6 +2,11 @@
 
 ## 1.1.0 — 2026-08-30
 
+- Added guarded label and milestone management.
+- Added pull request reviewer requests and issue assignee workflows.
+- Added GitHub Discussions reads, creation, comments, and updates through GraphQL.
+- Added merge queue inspection plus guarded enqueue and dequeue controls.
+- Preserved the no-delete policy across collaboration tooling.
 - Added SPDX SBOM export and organization package inventory reads.
 - Added repository attestation reads and guarded Sigstore bundle creation.
 - Added guarded dependency snapshot submission with bounded sensitive-content checks.
