@@ -22,6 +22,11 @@ cp -a /usr/local/bin/moory-configure-caddy "$BACKUP/moory-configure-caddy"
 cp -a /usr/local/lib/moory "$BACKUP/lib-moory"
 cp -a /etc/systemd/system/moory.service "$BACKUP/moory.service"
 rollback() {
+  rm -rf "$NEXT_VENV"
+  if (( VENV_SWAPPED )); then
+    rm -rf "$ROOT/venv"
+    mv "$PREVIOUS_VENV" "$ROOT/venv"
+  fi
   cp -a "$BACKUP/server.py" "$ROOT/app/server.py"
   cp -a "$BACKUP/moory" "$BACKUP/moory-setup" "$BACKUP/moory-configure-caddy" /usr/local/bin/
   rm -rf /usr/local/lib/moory
