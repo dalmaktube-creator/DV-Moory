@@ -178,7 +178,7 @@ def _github_http(
 ) -> tuple[int, bytes, dict[str, str]]:
     if not path.startswith("/") or "\x00" in path:
         raise ValueError("Invalid GitHub API path")
-    allowed_prefixes = ("/repos/", "/orgs/", "/installation/", "/rate_limit")
+    allowed_prefixes = ("/repos/", "/orgs/", "/graphql", "/installation/", "/rate_limit")
     if not path.startswith(allowed_prefixes):
         raise ValueError("GitHub API path is not allowlisted")
     payload = None if body is None else json.dumps(body).encode("utf-8")
