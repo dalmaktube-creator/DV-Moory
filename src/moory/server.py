@@ -935,6 +935,9 @@ def apply_unified_patch(
     check_only: bool = True,
 ) -> dict:
     """Check or apply a unified Git patch. Set check_only=false to modify files."""
+    patch_text = patch_text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    if patch_text and not patch_text.endswith("\n"):
+        patch_text += "\n"
     encoded_size = len(patch_text.encode("utf-8", errors="ignore"))
     if not patch_text or encoded_size > MAX_PATCH_BYTES:
         return {"ok": False, "error": "Patch must be 1 to 500000 bytes"}
