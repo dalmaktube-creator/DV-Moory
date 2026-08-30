@@ -3152,6 +3152,55 @@ def github_update_repository_security_advisory(project: ProjectName, ghsa_id: st
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_get_sbom(project: ProjectName, limit: int = 200) -> dict:
+    """Export a bounded SPDX SBOM summary from the dependency graph."""
+    try:
+        data = github_json(project, "/dependency-graph/sbom")
+        sbom = data.get("sbom", data); packages = sbom.get("packages", [])[:max(1, min(limit, 1000))]
+        compact = [{"SPDXID": item.get("SPDXID"), "name": item.get("name"), "versionInfo": item.get("versionInfo"), "licenseDeclared": item.get("licenseDeclared"), "licenseConcluded": item.get("licenseConcluded"), "externalRefs": item.get("externalRefs")} for item in packages]
+        return {"ok": True, "name": sbom.get("name"), "documentNamespace": sbom.get("documentNamespace"), "count": len(compact), "truncated": len(sbom.get("packages", [])) > len(compact), "packages": compact}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_attestations(project: ProjectName, subject_digest: str, predicate_type: str = "", limit: int = 50) -> dict:
+    """List repository attestations for a SHA-256 subject digest."""
+    try:
+        digest = validate_digest(subject_digest); safe_limit = max(1, min(limit, 100))
+        data = github_json(project, "/attestations/" + quote_path_value(digest), query={"predicate_type": predicate_type.strip(), "per_page": safe_limit})
+        items = data.get("attestations", [])[:safe_limit]
+        attestations = [{"repository_id": item.get("repository_id"), "bundle_url": item.get("bundle_url"), "initiator": item.get("initiator")} for item in items]
+        return {"ok": True, "subject_digest": digest, "count": len(attestations), "truncated": len(items) == safe_limit, "attestations": attestations}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_packages(project: ProjectName, package_type: Literal["npm", "maven", "rubygems", "docker", "nuget", "container"] = "container", visibility: Literal["public", "private", "internal", "all"] = "all", limit: int = 50, page: int = 1) -> dict:
+    """List packages owned by the registered repository organization."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_org_json(project, "/packages", {"package_type": package_type, "visibility": "" if visibility == "all" else visibility, "per_page": safe_limit, "page": safe_page})
+        packages = [{"id": item.get("id"), "name": item.get("name"), "package_type": item.get("package_type"), "visibility": item.get("visibility"), "version_count": item.get("version_count"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "html_url": item.get("html_url")} for item in items[:safe_limit]]
+        return {"ok": True, "count": len(packages), "page": safe_page, "truncated": len(packages) == safe_limit, "packages": packages}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_package_versions(project: ProjectName, package_type: Literal["npm", "maven", "rubygems", "docker", "nuget", "container"], package_name: str, state: Literal["active", "deleted"] = "active", limit: int = 50, page: int = 1) -> dict:
+    """List versions for an organization package."""
+    try:
+        name = quote_path_value(validate_title(package_name, "package name")); safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_org_json(project, f"/packages/{package_type}/{name}/versions", {"state": state, "per_page": safe_limit, "page": safe_page})
+        versions = [{"id": item.get("id"), "name": item.get("name"), "url": item.get("url"), "package_html_url": item.get("package_html_url"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "metadata": item.get("metadata")} for item in items[:safe_limit]]
+        return {"ok": True, "count": len(versions), "page": safe_page, "truncated": len(versions) == safe_limit, "versions": versions}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
