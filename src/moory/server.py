@@ -3061,6 +3061,63 @@ def github_get_repository_security_advisory(project: ProjectName, ghsa_id: str) 
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_create_repository_security_advisory(project: ProjectName, summary: str, description: str, severity: Literal["low", "medium", "high", "critical"], ecosystem: Literal["rubygems", "npm", "pip", "maven", "nuget", "composer", "go", "rust", "erlang", "actions", "pub", "other", "swift"], package_name: str, vulnerable_version_range: str, patched_versions: str = "", cwe_ids: list[str] = [], confirmation: str = "") -> dict:
+    """Create a draft repository security advisory after exact confirmation."""
+    try:
+        clean_summary = validate_title(summary, "advisory summary")
+        clean_description = validate_body(description, 60_000)
+        if ecosystem not in {"rubygems", "npm", "pip", "maven", "nuget", "composer", "go", "rust", "erlang", "actions", "pub", "other", "swift"}:
+            return {"ok": False, "error": "Unsupported package ecosystem"}
+        clean_package = validate_title(package_name, "package name")
+        clean_range = validate_body(vulnerable_version_range, 256)
+        if not clean_range:
+            return {"ok": False, "error": "vulnerable_version_range is required"}
+        clean_cwes = [item.strip().upper() for item in cwe_ids[:20]]
+        if len(cwe_ids) > 20 or any(not re.fullmatch(r"CWE-[1-9][0-9]{0,5}", item) for item in clean_cwes):
+            return {"ok": False, "error": "Invalid CWE identifiers"}
+        required = f"CREATE SECURITY ADVISORY {clean_summary}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Security advisory creation requires confirmation: {required}"}
+        vulnerability = {"package": {"ecosystem": ecosystem, "name": clean_package}, "vulnerable_version_range": clean_range, "patched_versions": validate_body(patched_versions, 256) or None}
+        payload: dict[str, Any] = {"summary": clean_summary, "description": clean_description, "severity": severity, "vulnerabilities": [vulnerability]}
+        if clean_cwes: payload["cwe_ids"] = clean_cwes
+        with WRITE_LOCK:
+            result = github_write_json(project, "/security-advisories", method="POST", body=payload, audit_action="github_create_repository_security_advisory")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "advisory": {"ghsa_id": item.get("ghsa_id"), "summary": item.get("summary"), "severity": item.get("severity"), "state": item.get("state"), "created_at": item.get("created_at"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_create_repository_security_advisory", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_update_repository_security_advisory(project: ProjectName, ghsa_id: str, summary: str | None = None, description: str | None = None, severity: Literal["low", "medium", "high", "critical"] | None = None, state: Literal["draft", "published", "closed"] | None = None, confirmation: str = "") -> dict:
+    """Update or publish a repository security advisory after exact confirmation."""
+    try:
+        ghsa = ghsa_id.strip().upper()
+        if not re.fullmatch(r"GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}", ghsa):
+            return {"ok": False, "error": "Invalid GHSA identifier"}
+        payload: dict[str, Any] = {}
+        if summary is not None: payload["summary"] = validate_title(summary, "advisory summary")
+        if description is not None: payload["description"] = validate_body(description, 60_000)
+        if severity is not None: payload["severity"] = severity
+        if state is not None: payload["state"] = state
+        if not payload:
+            return {"ok": False, "error": "No advisory updates were supplied"}
+        required = f"UPDATE SECURITY ADVISORY {ghsa}"
+        if state == "published": required = f"PUBLISH SECURITY ADVISORY {ghsa}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Security advisory update requires confirmation: {required}"}
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/security-advisories/{ghsa}", method="PATCH", body=payload, audit_action="github_update_repository_security_advisory")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "advisory": {"ghsa_id": item.get("ghsa_id"), "summary": item.get("summary"), "severity": item.get("severity"), "state": item.get("state"), "updated_at": item.get("updated_at"), "published_at": item.get("published_at"), "closed_at": item.get("closed_at"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_update_repository_security_advisory", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
