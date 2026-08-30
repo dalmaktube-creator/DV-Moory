@@ -2,6 +2,24 @@
 
 Moory is a self-hosted, security-hardened MCP bridge that lets Notion AI work with explicitly registered Git repositories and curated GitHub APIs. It includes guarded code changes, commits, pushes, issues, pull requests, Actions, logs, releases, secret scanning and audit logging.
 
+## Quick setup
+
+Install Moory on a fresh Ubuntu 24.04 server with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dalmaktube-creator/DV-Moory/main/install.sh | sudo bash
+```
+
+The installer asks for the data path, local port, public domain, GitHub authentication mode and first repository.
+
+For personal use, choose **Quick Mode** and provide a fine-grained GitHub token limited to the repositories Moory should access.
+
+After installation, open the control center with:
+
+```bash
+sudo moory
+```
+
 ## Worker core
 
 Moory keeps reasoning with the connected agent and moves deterministic repository work to the server.
@@ -20,27 +38,6 @@ Moory keeps reasoning with the connected agent and moves deterministic repositor
 - `release_readiness` reports branch, worktree, remote divergence, latest CI, changelog, and tag checks without mutation.
 
 The original granular read tools remain available, so agents can always inspect exact files and line ranges when compact context is insufficient.
-
-## Easy installation
-
-After the first public release, install on Ubuntu with one command:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/dalmaktube-creator/DV-Moory/main/install.sh | sudo bash
-```
-
-The colored setup wizard asks you to choose:
-
-1. **Quick Mode** — fine-grained GitHub token; fastest for personal use.
-2. **Hardened Mode** — GitHub App and short-lived tokens; recommended for production.
-
-After installation, open the control center at any time:
-
-```bash
-sudo moory
-```
-
-The menu manages repositories, authentication, Notion connection details, status, logs, backups, token rotation and updates. Users do not need to remember maintenance commands.
 
 ## Security model
 
