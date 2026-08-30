@@ -38,6 +38,12 @@ rollback() {
 trap rollback ERR
 git -C "$SOURCE" fetch --prune origin
 git -C "$SOURCE" pull --ff-only origin main
+python3 -m venv "$NEXT_VENV"
+"$NEXT_VENV/bin/pip" install -r "$SOURCE/requirements.lock"
+"$NEXT_VENV/bin/python" -m py_compile "$SOURCE/src/moory/server.py"
+mv "$ROOT/venv" "$PREVIOUS_VENV"
+mv "$NEXT_VENV" "$ROOT/venv"
+VENV_SWAPPED=1
 "$ROOT/venv/bin/pip" install -r "$SOURCE/requirements.lock"
 install -o moory -g moory -m 640 "$SOURCE/src/moory/server.py" "$ROOT/app/server.py"
 install -o root -g root -m 755 "$SOURCE/scripts/moory" /usr/local/bin/moory
