@@ -1174,11 +1174,11 @@ def apply_change_set(
     if not preflight.get("ok"):
         return {"ok": False, "stage": "preflight", "preflight": preflight}
     if check_only:
-        return {"ok": True, "stage": "preflight", "check_only": True, "paths": preflight.get("paths", [])}
+        return {"ok": True, "stage": "preflight", "check_only": True, "validation_profile": validation_profile, "paths": preflight.get("paths", [])}
     applied = apply_unified_patch(project, patch_text, check_only=False)
     if not applied.get("ok"):
         return {"ok": False, "stage": "apply", "preflight": preflight, "applied": applied}
-    validation = validate_changes(project, staged=False)
+    validation = validate_project(project) if validation_profile == "static" else validate_changes(project, staged=False)
     diff = git_diff(project, staged=False)
     if validation.get("ok"):
         return {
