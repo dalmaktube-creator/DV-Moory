@@ -798,7 +798,18 @@ def search_tracked_code(
     if result["exit_code"] == 1:
         return {"ok": True, "exit_code": 0, "output": "", "error": ""}
     if result["ok"]:
-        result["output"] = "\n".join(result["output"].splitlines()[:safe_limit])
+        safe_lines: list[str] = []
+        filtered_sensitive_matches = 0
+        for raw in result["output"].splitlines():
+            match = re.match(r"^(.+):(\d+):(.*)$", raw)
+            if not match or safe_search_candidate(project, match.group(1)) is None:
+                filtered_sensitive_matches += 1
+                continue
+            safe_lines.append(raw)
+        result["output"] = "\n".join(safe_lines[:safe_limit])
+        result["total_safe_matches"] = len(safe_lines)
+        result["truncated"] = len(safe_lines) > safe_limit
+        result["filtered_sensitive_matches"] = filtered_sensitive_matches
     return result
 
 
