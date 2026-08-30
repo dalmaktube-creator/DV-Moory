@@ -766,6 +766,34 @@ def search_tracked_code(
 
 
 @mcp.tool()
+def moory_capabilities() -> dict:
+    """Explain Moory's worker role, context levels, safety rules, and recommended change workflow."""
+    return {
+        "ok": True,
+        "role": "Moory executes deterministic work; the connected agent reasons, decides, and reviews.",
+        "context_levels": {
+            "summary": "Use first for orientation; never edit from summary alone.",
+            "evidence": "Use for source lines, errors, and facts before deciding a change.",
+            "full": "Use only when evidence is truncated, ambiguous, contradictory, or insufficient.",
+        },
+        "rules": [
+            "Read the exact latest target range before generating a patch.",
+            "Every bounded result must disclose truncation and available escape hatches.",
+            "Keep granular read tools available even when composite tools are used.",
+        ],
+        "change_workflow": [
+            "sync and confirm a clean approved branch",
+            "start with summary context",
+            "escalate to evidence and read exact target lines",
+            "dry-run and apply a bounded patch",
+            "validate and review the diff",
+            "commit, push, and inspect CI",
+        ],
+        "heavy_work": "Use GitHub Actions for APKs, binaries, emulators, matrices, and long tests.",
+    }
+
+
+@mcp.tool()
 def worker_context(
     project: ProjectName,
     operation: Literal["overview", "search"] = "overview",
