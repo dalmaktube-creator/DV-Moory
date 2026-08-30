@@ -899,6 +899,31 @@ def worker_context(
 
 
 @mcp.tool()
+def worker_benchmark(project: ProjectName, query: str = "") -> dict:
+    """Measure output bytes, elapsed time, and call reduction; bytes are only a token-use proxy."""
+    if len(query) > 200:
+        return {"ok": False, "error": "Benchmark query must be at most 200 characters"}
+    started = time.perf_counter()
+    status = run_git(project, ["status", "--short", "--branch"])
+    commits = run_git(project, ["log", "-5", "--pretty=format:%h|%s"])
+    files = run_git(project, ["ls-files"], output_limit=2_000_000)
+    search = run_git(project, ["grep", "-n", "-I", "--fixed-strings", "--", query], output_limit=2_000_000) if query else {"output": ""}
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    baseline = {"status": status, "commits": commits, "files": files, "search": search}
+    summary = {"project": project, "status": status.get("output", "").strip(), "commit_count": len(commits.get("output", "").splitlines()), "file_count": len(files.get("output", "").splitlines()), "search_preview": search.get("output", "").splitlines()[:10]}
+    baseline_bytes = len(json.dumps(baseline, ensure_ascii=False).encode("utf-8"))
+    summary_bytes = len(json.dumps(summary, ensure_ascii=False).encode("utf-8"))
+    reduction = 0.0 if baseline_bytes == 0 else round((1 - summary_bytes / baseline_bytes) * 100, 2)
+    return {
+        "ok": True,
+        "measurement": "UTF-8 JSON bytes are a context-size proxy, not an exact token count.",
+        "baseline": {"tool_calls": 4 if query else 3, "bytes": baseline_bytes, "elapsed_ms": elapsed_ms},
+        "worker": {"tool_calls": 1, "bytes": summary_bytes},
+        "output_reduction_percent": reduction,
+    }
+
+
+@mcp.tool()
 def validate_changes(project: ProjectName, staged: bool = False) -> dict:
     """Run Git whitespace validation without modifying files."""
     arguments = ["diff"]
