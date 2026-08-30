@@ -1205,6 +1205,8 @@ def apply_unified_patch(
             audit("apply_patch", project, False, reason)
             return {"ok": False, "error": reason}
 
+        if not check_only and not audit("apply_patch_preflight", project, True, "write preflight"):
+            return {"ok": False, "error": "Audit log unavailable; patch blocked"}
         temporary_path: str | None = None
         try:
             with tempfile.NamedTemporaryFile(
