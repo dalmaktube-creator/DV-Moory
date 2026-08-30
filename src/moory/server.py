@@ -3289,6 +3289,35 @@ def github_create_artifact_deployment_record(project: ProjectName, name: str, su
         audit("github_create_artifact_deployment_record", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_labels(project: ProjectName, limit: int = 50, page: int = 1) -> dict:
+    """List repository labels."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/labels", query={"per_page": safe_limit, "page": safe_page})
+        labels = [{"name": item.get("name"), "color": item.get("color"), "description": item.get("description"), "default": item.get("default")} for item in items[:safe_limit]]
+        return {"ok": True, "count": len(labels), "page": safe_page, "truncated": len(labels) == safe_limit, "labels": labels}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_upsert_label(project: ProjectName, name: str, color: str, description: str = "", new_name: str = "", confirmation: str = "") -> dict:
+    """Create or update a label after exact confirmation."""
+    try:
+        clean_name = validate_title(name, "label name"); clean_color = color.strip().lstrip("#").lower()
+        if not re.fullmatch(r"[0-9a-f]{6}", clean_color): return {"ok": False, "error": "Label color must be six hexadecimal characters"}
+        required = f"UPSERT LABEL {clean_name}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Label change requires confirmation: {required}"}
+        path = "/labels/" + quote_path_value(clean_name); payload = {"new_name": validate_title(new_name, "new label name") if new_name else clean_name, "color": clean_color, "description": validate_body(description, 100, "description")}
+        try: github_json(project, path); method = "PATCH"
+        except Exception: path = "/labels"; method = "POST"; payload["name"] = payload.pop("new_name")
+        with WRITE_LOCK: result = github_write_json(project, path, method=method, body=payload, audit_action="github_upsert_label")
+        return {"ok": True, "status": result["status"], "label": result["data"]}
+    except Exception as error:
+        audit("github_upsert_label", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
