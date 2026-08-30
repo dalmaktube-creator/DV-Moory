@@ -979,26 +979,38 @@ def prepare_change_context(
 
 @mcp.tool()
 def worker_benchmark(project: ProjectName, query: str = "") -> dict:
-    """Measure output bytes, elapsed time, and call reduction; bytes are only a token-use proxy."""
+    """Compare actual granular and Worker tool payloads with deterministic byte and call measurements."""
     if len(query) > 200:
         return {"ok": False, "error": "Benchmark query must be at most 200 characters"}
-    started = time.perf_counter()
-    status = run_git(project, ["status", "--short", "--branch"])
-    commits = run_git(project, ["log", "-5", "--pretty=format:%h|%s"])
-    files = run_git(project, ["ls-files"], output_limit=2_000_000)
-    search = run_git(project, ["grep", "-n", "-I", "--fixed-strings", "--", query], output_limit=2_000_000) if query else {"output": ""}
-    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
-    baseline = {"status": status, "commits": commits, "files": files, "search": search}
-    summary = {"project": project, "status": status.get("output", "").strip(), "commit_count": len(commits.get("output", "").splitlines()), "file_count": len(files.get("output", "").splitlines()), "search_preview": search.get("output", "").splitlines()[:10]}
+    baseline_started = time.perf_counter()
+    baseline = {
+        "status": git_status(project),
+        "commits": recent_commits(project, limit=5),
+        "files": list_tracked_files(project, limit=500),
+    }
+    if query:
+        baseline["search"] = search_tracked_code(project, query, maximum_results=50)
+    baseline_elapsed_ms = round((time.perf_counter() - baseline_started) * 1000, 2)
+    worker_started = time.perf_counter()
+    worker = {
+        "overview": worker_context(project, operation="overview", detail="summary", limit=20),
+    }
+    if query:
+        worker["search"] = worker_context(project, operation="search", query=query, detail="summary", limit=10)
+    worker_elapsed_ms = round((time.perf_counter() - worker_started) * 1000, 2)
     baseline_bytes = len(json.dumps(baseline, ensure_ascii=False).encode("utf-8"))
-    summary_bytes = len(json.dumps(summary, ensure_ascii=False).encode("utf-8"))
-    reduction = 0.0 if baseline_bytes == 0 else round((1 - summary_bytes / baseline_bytes) * 100, 2)
+    worker_bytes = len(json.dumps(worker, ensure_ascii=False).encode("utf-8"))
+    reduction = 0.0 if baseline_bytes == 0 else round((1 - worker_bytes / baseline_bytes) * 100, 2)
+    baseline_calls = 4 if query else 3
+    worker_calls = 2 if query else 1
     return {
         "ok": True,
-        "measurement": "UTF-8 JSON bytes are a context-size proxy, not an exact token count.",
-        "baseline": {"tool_calls": 4 if query else 3, "bytes": baseline_bytes, "elapsed_ms": elapsed_ms},
-        "worker": {"tool_calls": 1, "bytes": summary_bytes},
+        "measurement": "Actual serialized tool payloads measured as exact UTF-8 JSON bytes.",
+        "token_claim": "Exact model tokens require the active model tokenizer; byte reduction is deterministic and tokenizer-independent input reduction.",
+        "baseline": {"tool_calls": baseline_calls, "bytes": baseline_bytes, "elapsed_ms": baseline_elapsed_ms},
+        "worker": {"tool_calls": worker_calls, "bytes": worker_bytes, "elapsed_ms": worker_elapsed_ms},
         "output_reduction_percent": reduction,
+        "tool_call_reduction_percent": round((1 - worker_calls / baseline_calls) * 100, 2),
     }
 
 
