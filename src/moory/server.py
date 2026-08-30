@@ -1459,6 +1459,63 @@ def github_get_pull_request(project: ProjectName, pull_number: int) -> dict:
 
 
 @mcp.tool()
+def release_readiness(project: ProjectName, tag_name: str = "") -> dict:
+    """Check local Git state, remote divergence, latest CI, changelog, and optional tag availability without mutation."""
+    config = PROJECTS.get(project)
+    if config is None:
+        return {"ok": False, "error": "Unknown project"}
+    tag = tag_name.strip()
+    if tag and (len(tag) > 150 or not re.fullmatch(r"[A-Za-z0-9._/+\-]+", tag)):
+        return {"ok": False, "error": "Invalid tag name"}
+    status = run_git(project, ["status", "--porcelain"])
+    branch_result = run_git(project, ["branch", "--show-current"])
+    branch_ok = branch_result.get("ok") and branch_result.get("output", "").strip() == config["branch"]
+    sync = run_git(project, ["rev-list", "--left-right", "--count", f"HEAD...origin/{config['branch']}"])
+    ahead = behind = 0
+    if sync.get("ok"):
+        try:
+            left, right = sync.get("output", "0 0").split()
+            ahead, behind = int(left), int(right)
+        except (ValueError, TypeError):
+            pass
+    changelog = run_git(project, ["ls-files", "--error-unmatch", "--", "CHANGELOG.md"])
+    partial = False
+    latest: dict[str, Any] | None = None
+    try:
+        data = github_json(project, "/actions/runs", query={"branch": config["branch"], "per_page": 1})
+        runs = data.get("workflow_runs", [])
+        if runs:
+            latest = compact_run(runs[0])
+    except Exception:
+        partial = True
+    tag_exists = False
+    if tag:
+        tags = run_git(project, ["tag", "--list", tag])
+        tag_exists = bool(tags.get("output", "").strip())
+    checks = {
+        "allowed_branch": bool(branch_ok),
+        "clean_worktree": bool(status.get("ok") and not status.get("output", "").strip()),
+        "remote_not_ahead": bool(sync.get("ok") and behind == 0),
+        "latest_ci_success": bool(latest and latest.get("status") == "completed" and latest.get("conclusion") == "success"),
+        "changelog_present": bool(changelog.get("ok")),
+        "tag_available": not tag_exists,
+    }
+    ready = all(checks.values())
+    return {
+        "ok": True,
+        "partial": partial,
+        "project": project,
+        "tag": tag or None,
+        "checks": checks,
+        "ahead": ahead,
+        "behind": behind,
+        "latest_workflow": latest,
+        "ready": ready,
+        "next_recommended_action": "Create a draft release only after every check is true." if ready else "Resolve failed readiness checks before releasing.",
+    }
+
+
+@mcp.tool()
 def github_list_releases(project: ProjectName, limit: int = 20) -> dict:
     """List releases and their assets."""
     try:
