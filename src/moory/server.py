@@ -2650,6 +2650,54 @@ def github_request_pages_build(project: ProjectName, confirmation: str = "") -> 
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_workflows(project: ProjectName, limit: int = 50, page: int = 1) -> dict:
+    """List repository workflow definitions and states."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        data = github_json(project, "/actions/workflows", query={"per_page": safe_limit, "page": safe_page})
+        workflows = [
+            {"id": item.get("id"), "name": item.get("name"), "path": item.get("path"), "state": item.get("state"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "html_url": item.get("html_url")}
+            for item in data.get("workflows", [])[:safe_limit]
+        ]
+        return {"ok": True, "total_count": data.get("total_count"), "count": len(workflows), "page": safe_page, "truncated": len(workflows) == safe_limit, "next_page": safe_page + 1 if len(workflows) == safe_limit else None, "workflows": workflows}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_workflow(project: ProjectName, workflow: str) -> dict:
+    """Read one workflow by numeric ID or simple workflow filename."""
+    try:
+        clean_workflow = str(workflow).strip()
+        if not re.fullmatch(r"(?:[1-9][0-9]{0,18}|[A-Za-z0-9._\-]+\.(?:yml|yaml))", clean_workflow):
+            return {"ok": False, "error": "workflow must be a numeric ID or simple .yml/.yaml filename"}
+        item = github_json(project, "/actions/workflows/" + clean_workflow)
+        return {"ok": True, "workflow": {"id": item.get("id"), "name": item.get("name"), "path": item.get("path"), "state": item.get("state"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "html_url": item.get("html_url"), "badge_url": item.get("badge_url")}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_set_workflow_state(project: ProjectName, workflow: str, action: Literal["enable", "disable"], confirmation: str = "") -> dict:
+    """Enable or disable a workflow after exact confirmation."""
+    try:
+        clean_workflow = str(workflow).strip()
+        if not re.fullmatch(r"(?:[1-9][0-9]{0,18}|[A-Za-z0-9._\-]+\.(?:yml|yaml))", clean_workflow):
+            return {"ok": False, "error": "workflow must be a numeric ID or simple .yml/.yaml filename"}
+        if action not in {"enable", "disable"}:
+            return {"ok": False, "error": "action must be enable or disable"}
+        required = f"{action.upper()} WORKFLOW {clean_workflow}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Workflow state change requires confirmation: {required}"}
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/actions/workflows/{clean_workflow}/{action}", method="PUT", body={}, audit_action="github_set_workflow_state")
+        return {"ok": True, "status": result["status"], "workflow": clean_workflow, "action": action}
+    except Exception as error:
+        audit("github_set_workflow_state", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
