@@ -34,7 +34,7 @@ if [[ -n $DOMAIN && -r $TOKEN_FILE ]]; then
   tools=$(curl --fail-with-body -sS -H @"$AUTH_HEADER" -H "$MCP_ACCEPT" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' "$ENDPOINT") || fail "MCP tools/list request"
   grep -q 'list_projects' <<<"${tools:-}" || fail "MCP tools/list response"
   github=$(curl --fail-with-body -sS -H @"$AUTH_HEADER" -H "$MCP_ACCEPT" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"github_health","arguments":{}}}' "$ENDPOINT") || fail "GitHub health request"
-  grep -Eq 'Authentication: ok|"ok"[[:space:]]*:[[:space:]]*true' <<<"${github:-}" || fail "GitHub authentication health"
+  grep -Eq 'Authentication: ok|"authentication"[[:space:]]*:[[:space:]]*"ok"|\\"authentication\\"[[:space:]]*:[[:space:]]*\\"ok\\"' <<<"${github:-}" || fail "GitHub authentication health"
 else
   fail "public domain or token configuration is missing"
 fi
