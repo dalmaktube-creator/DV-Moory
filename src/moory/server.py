@@ -3520,6 +3520,25 @@ def github_get_repository_settings(project: ProjectName) -> dict:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_update_repository_settings(project: ProjectName, description: str | None = None, homepage: str | None = None, has_issues: bool | None = None, has_projects: bool | None = None, has_wiki: bool | None = None, has_discussions: bool | None = None, allow_squash_merge: bool | None = None, allow_merge_commit: bool | None = None, allow_rebase_merge: bool | None = None, allow_auto_merge: bool | None = None, delete_branch_on_merge: bool | None = None, web_commit_signoff_required: bool | None = None, confirmation: str = "") -> dict:
+    """Update non-destructive repository settings after exact confirmation."""
+    try:
+        payload: dict[str, Any] = {}
+        if description is not None: payload["description"] = validate_body(description, 350, "description")
+        if homepage is not None: payload["homepage"] = validate_external_url(homepage) if homepage else ""
+        toggles = {"has_issues": has_issues, "has_projects": has_projects, "has_wiki": has_wiki, "has_discussions": has_discussions, "allow_squash_merge": allow_squash_merge, "allow_merge_commit": allow_merge_commit, "allow_rebase_merge": allow_rebase_merge, "allow_auto_merge": allow_auto_merge, "delete_branch_on_merge": delete_branch_on_merge, "web_commit_signoff_required": web_commit_signoff_required}
+        for key, value in toggles.items():
+            if value is not None: payload[key] = bool(value)
+        if not payload: return {"ok": False, "error": "At least one repository setting is required"}
+        required = "UPDATE REPOSITORY SETTINGS"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Repository settings update requires confirmation: {required}"}
+        with WRITE_LOCK: result = github_write_json(project, "", method="PATCH", body=payload, audit_action="github_update_repository_settings")
+        return {"ok": True, "status": result["status"], "updated": sorted(payload), "settings": result["data"]}
+    except Exception as error:
+        audit("github_update_repository_settings", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
