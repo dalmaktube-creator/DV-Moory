@@ -55,3 +55,33 @@ with tempfile.TemporaryDirectory() as temporary:
     secret = "ghp_" + "A" * 24
     redacted = module.redact_github_text("Authorization: Bearer " + secret)
     assert secret not in redacted
+
+    draft = {
+        "id": 1,
+        "tag_name": "v1.1.0",
+        "name": "RC",
+        "draft": True,
+        "prerelease": True,
+        "target_commitish": "old-head",
+        "assets": [],
+    }
+    captured = {}
+
+    def fake_github_json(project, path, query=None):
+        if path.startswith("/releases/tags/"):
+            raise RuntimeError("draft tag endpoint unavailable")
+        if path == "/releases":
+            return [draft]
+        if path == "/releases/1":
+            return draft
+        raise AssertionError(path)
+
+    def fake_github_write_json(project, path, method, body, audit_action):
+        captured["body"] = body
+        return {"status": 200, "data": {**draft, **body}}
+
+    module.github_json = fake_github_json
+    module.github_write_json = fake_github_write_json
+    loaded = module.github_get_release("demo", "v1.1.0")
+    assert loaded["ok"] and loaded["release"]["draft"]
+    updated = module.github_update_release("demo", 1, target_commitish="new-head")
