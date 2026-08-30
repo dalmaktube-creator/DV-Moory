@@ -77,6 +77,32 @@ def github_json(token: str, path: str, params: dict[str, str | int]) -> Any:
         fail("Could not read repositories from GitHub")
 
 
+def github_post_json(token: str, path: str, body: dict[str, Any]) -> Any:
+    request = urllib.request.Request(
+        f"{API_BASE}{path}",
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "User-Agent": "Moory-Repository-Importer/1.0",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        try:
+            payload = json.loads(error.read(100_000).decode("utf-8", errors="replace"))
+            message = str(payload.get("message", "GitHub rejected the request"))
+        except (ValueError, AttributeError):
+            message = "GitHub rejected the request"
+        fail(f"GitHub API returned HTTP {error.code}: {message[:300]}")
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        fail("Could not write repository settings through GitHub")
+
 def list_accessible_repositories(token: str) -> list[dict[str, Any]]:
     repositories: list[dict[str, Any]] = []
     for page in range(1, 11):
