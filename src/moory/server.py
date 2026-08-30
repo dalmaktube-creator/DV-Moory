@@ -62,7 +62,11 @@ PATCH_TMP_DIR = ROOT / "logs"
 GITHUB_AUTH_CONFIG = ROOT / "config/github-auth.env"
 WRITE_LOCK = threading.Lock()
 TOKEN_LOCK = threading.Lock()
+CONTEXT_CACHE_LOCK = threading.Lock()
 GH_TOKEN_CACHE: dict[str, Any] = {"token": "", "expires_epoch": 0, "expires_at": "", "permissions": {}, "repository_selection": "", "auth_mode": ""}
+CONTEXT_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+MAX_CONTEXT_CACHE_ENTRIES = 64
+DETAIL_LEVELS = ("summary", "evidence", "full")
 MAX_PATCH_BYTES = 500_000
 
 SENSITIVE_SUFFIXES = {
@@ -90,12 +94,13 @@ GIT_SECRET_PATTERN = (
 mcp = MCPServer(
     name="Moory",
     version="1.0.0",
-    description="Self-hosted restricted Git and GitHub API bridge for registered projects.",
+    description="Deterministic self-hosted MCP worker for bounded context, guarded changes, CI inspection, and curated GitHub operations.",
     instructions=(
-        "Only use registered projects and approved branches. Never expose "
-        "secrets. Never force-push, rewrite history, delete repositories, or "
-        "run arbitrary shell commands. Validate changes before commit and push. "
-        "GitHub API access is restricted to registered repositories and curated tools."
+        "Moory executes deterministic work; the connected agent reasons and decides. Start context work with "
+        "worker_context detail=summary, escalate to evidence before editing, and use full only when evidence is "
+        "truncated, ambiguous, contradictory, or insufficient. Read exact current file ranges before patching. "
+        "Only use registered projects and approved branches. Never expose secrets, force-push, rewrite history, "
+        "delete repositories, or run arbitrary shell commands. Validate changes before commit and push."
     ),
 )
 
