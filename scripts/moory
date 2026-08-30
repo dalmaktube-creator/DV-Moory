@@ -89,11 +89,11 @@ PY
 
 add_project() {
   need_root; ensure_layout
-  [[ -x /usr/local/lib/moory/import-quick-repos.py ]] || {
+  [[ -x "$ROOT/venv/bin/python" && -r /usr/local/lib/moory/import-quick-repos.py ]] || {
     error "Repository importer is missing. Run Update Moory first."
     return
   }
-  /usr/local/lib/moory/import-quick-repos.py
+  "$ROOT/venv/bin/python" /usr/local/lib/moory/import-quick-repos.py
 }
 
 add_project_hardened() {
