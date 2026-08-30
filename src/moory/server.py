@@ -3033,6 +3033,34 @@ def github_get_secret_scanning_bypass_request(project: ProjectName, request_numb
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_repository_security_advisories(project: ProjectName, state: Literal["triage", "draft", "published", "closed", "all"] = "all", limit: int = 50) -> dict:
+    """List repository security advisories, including authorized private drafts."""
+    try:
+        safe_limit = max(1, min(limit, 100))
+        items = github_json(project, "/security-advisories", query={"state": "" if state == "all" else state, "per_page": safe_limit})
+        advisories = [
+            {"ghsa_id": item.get("ghsa_id"), "cve_id": item.get("cve_id"), "summary": item.get("summary"), "severity": item.get("severity"), "state": item.get("state"), "identifiers": item.get("identifiers"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "published_at": item.get("published_at"), "closed_at": item.get("closed_at"), "html_url": item.get("html_url")}
+            for item in items[:safe_limit]
+        ]
+        return {"ok": True, "count": len(advisories), "truncated": len(advisories) == safe_limit, "advisories": advisories}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_repository_security_advisory(project: ProjectName, ghsa_id: str) -> dict:
+    """Read one repository security advisory by GHSA identifier."""
+    try:
+        ghsa = ghsa_id.strip().upper()
+        if not re.fullmatch(r"GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}", ghsa):
+            return {"ok": False, "error": "Invalid GHSA identifier"}
+        item = github_json(project, f"/security-advisories/{ghsa}")
+        return {"ok": True, "advisory": {"ghsa_id": item.get("ghsa_id"), "cve_id": item.get("cve_id"), "summary": item.get("summary"), "description": item.get("description"), "severity": item.get("severity"), "state": item.get("state"), "identifiers": item.get("identifiers"), "cwe_ids": item.get("cwe_ids"), "vulnerabilities": item.get("vulnerabilities"), "collaborating_users": item.get("collaborating_users"), "collaborating_teams": item.get("collaborating_teams"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "published_at": item.get("published_at"), "closed_at": item.get("closed_at"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
