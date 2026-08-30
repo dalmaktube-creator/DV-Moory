@@ -1722,6 +1722,7 @@ def github_list_workflow_runs(
     branch: str = "",
     status: str = "",
     limit: int = 20,
+    page: int = 1,
 ) -> dict:
     """List GitHub Actions workflow runs with optional branch and status filters."""
     allowed_statuses = {"", "queued", "in_progress", "completed", "requested", "waiting", "pending", "action_required", "cancelled", "failure", "neutral", "skipped", "stale", "success", "timed_out"}
@@ -1731,9 +1732,10 @@ def github_list_workflow_runs(
         if branch and (len(branch) > 200 or not re.fullmatch(r"[A-Za-z0-9._/\-]+", branch)):
             return {"ok": False, "error": "Invalid branch filter"}
         safe_limit = max(1, min(limit, 100))
-        data = github_json(project, "/actions/runs", query={"branch": branch, "status": status, "per_page": safe_limit})
+        safe_page = max(1, min(page, 1000))
+        data = github_json(project, "/actions/runs", query={"branch": branch, "status": status, "per_page": safe_limit, "page": safe_page})
         runs = [compact_run(item) for item in data.get("workflow_runs", [])[:safe_limit]]
-        return {"ok": True, "total_count": data.get("total_count"), "count": len(runs), "workflow_runs": runs}
+        return {"ok": True, "total_count": data.get("total_count"), "count": len(runs), "page": safe_page, "truncated": len(runs) == safe_limit, "next_page": safe_page + 1 if len(runs) == safe_limit else None, "workflow_runs": runs}
     except Exception as error:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
