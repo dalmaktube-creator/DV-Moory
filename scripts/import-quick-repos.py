@@ -369,6 +369,17 @@ def main() -> None:
     logs_root.mkdir(parents=True, exist_ok=True)
     used = set(registry)
 
+    temporary_token_path: Path | None = None
+    if mode == "github_app":
+        token_descriptor, token_name = tempfile.mkstemp(prefix="moory-app-token-", dir=logs_root)
+        os.close(token_descriptor)
+        temporary_token_path = Path(token_name)
+        temporary_token_path.write_text(token, encoding="utf-8")
+        os.chmod(temporary_token_path, 0o600)
+        subprocess.run(["chown", "moory:moory", str(temporary_token_path)], check=True)
+        token_path = temporary_token_path
+    if token_path is None:
+        fail("GitHub credential path is unavailable")
     descriptor, askpass_name = tempfile.mkstemp(prefix="moory-askpass-", dir=logs_root)
     os.close(descriptor)
     askpass = Path(askpass_name)
