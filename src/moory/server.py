@@ -1315,6 +1315,8 @@ def commit_changes(project: ProjectName, message: str) -> dict:
             audit("commit", project, False, reason)
             return {"ok": False, "error": reason}
 
+        if not audit("commit_preflight", project, True, "write preflight"):
+            return {"ok": False, "error": "Audit log unavailable; commit blocked"}
         paths = changed_paths(project)
         if not paths:
             return {"ok": False, "error": "There are no changes to commit"}
