@@ -796,6 +796,25 @@ def moory_capabilities() -> dict:
 
 
 @mcp.tool()
+def moory_tool_catalog(profile: Literal["core", "git", "github", "all"] = "core") -> dict:
+    """Discover compact task-oriented tool profiles without hiding the full escape hatch."""
+    groups = {
+        "core": ["moory_capabilities", "worker_context", "prepare_change_context", "validate_project", "apply_change_set", "commit_changes", "push_project", "inspect_ci_failure", "release_readiness"],
+        "git": ["git_status", "recent_commits", "git_diff", "list_tracked_files", "read_tracked_file", "search_tracked_code", "sync_project", "apply_unified_patch", "validate_changes"],
+        "github": ["github_health", "github_permission_diagnostics", "github_repo_summary", "github_list_issues", "github_get_issue", "github_list_pull_requests", "github_get_pull_request", "github_list_workflow_runs", "github_get_workflow_run", "github_get_actions_log", "github_list_artifacts", "github_list_releases", "github_get_release"],
+    }
+    selected = groups if profile == "all" else {profile: groups[profile]}
+    return {
+        "ok": True,
+        "profile": profile,
+        "tools": selected,
+        "available_profiles": ["core", "git", "github", "all"],
+        "dynamic_hiding": False,
+        "next_recommended_action": "Start with the core profile; request git or github only when the task requires it.",
+    }
+
+
+@mcp.tool()
 def worker_context(
     project: ProjectName,
     operation: Literal["overview", "search"] = "overview",
