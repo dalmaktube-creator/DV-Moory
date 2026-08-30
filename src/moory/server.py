@@ -3625,6 +3625,38 @@ def github_upsert_ruleset(project: ProjectName, name: str, target: Literal["bran
         audit("github_upsert_ruleset", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_get_custom_property_values(project: ProjectName) -> dict:
+    """Read custom property values assigned to a repository."""
+    try:
+        items = github_json(project, "/properties/values")
+        return {"ok": True, "count": len(items), "properties": items}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_update_custom_property_values(project: ProjectName, properties: list[dict[str, Any]], confirmation: str = "") -> dict:
+    """Set or unset repository custom property values after exact confirmation."""
+    try:
+        if not properties or len(properties) > 100: return {"ok": False, "error": "Provide 1 through 100 custom properties"}
+        normalized: list[dict[str, Any]] = []
+        for item in properties:
+            if not isinstance(item, dict) or set(item) != {"property_name", "value"}: return {"ok": False, "error": "Each custom property requires only property_name and value"}
+            name = validate_title(str(item["property_name"]), "property name")
+            value = item["value"]
+            if value is not None and not isinstance(value, str) and not (isinstance(value, list) and all(isinstance(part, str) for part in value)): return {"ok": False, "error": f"Invalid value for custom property {name}"}
+            normalized.append({"property_name": name, "value": value})
+        encoded = json.dumps(normalized, separators=(",", ":"))
+        if len(encoded) > 100_000 or redact_github_text(encoded) != encoded: return {"ok": False, "error": "Oversized or sensitive custom property payload"}
+        required = "UPDATE CUSTOM PROPERTIES"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Custom property update requires confirmation: {required}"}
+        with WRITE_LOCK: result = github_write_json(project, "/properties/values", method="PATCH", body={"properties": normalized}, audit_action="github_update_custom_property_values")
+        return {"ok": True, "status": result["status"], "updated": [item["property_name"] for item in normalized]}
+    except Exception as error:
+        audit("github_update_custom_property_values", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
