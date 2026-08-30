@@ -3389,6 +3389,34 @@ def github_add_issue_assignees(project: ProjectName, issue_number: int, assignee
         audit("github_add_issue_assignees", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_discussions(project: ProjectName, limit: int = 20) -> dict:
+    """List discussion categories and recent repository discussions."""
+    try:
+        owner, repo = github_repo(project).split("/", 1); safe_limit = max(1, min(limit, 50))
+        query = "query($owner:String!,$repo:String!,$limit:Int!){repository(owner:$owner,name:$repo){discussionCategories(first:100){nodes{id name slug}} discussions(first:$limit,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{id number title url createdAt updatedAt author{login} category{id name} answerChosenAt comments{totalCount}}}}}"
+        data = github_graphql(project, query, {"owner": owner, "repo": repo, "limit": safe_limit})
+        repository = data.get("repository") or {}; nodes = repository.get("discussions", {}).get("nodes", [])
+        discussions = [{"id": item.get("id"), "number": item.get("number"), "title": item.get("title"), "url": item.get("url"), "author": (item.get("author") or {}).get("login"), "category": item.get("category"), "comments": (item.get("comments") or {}).get("totalCount"), "answer_chosen_at": item.get("answerChosenAt"), "updated_at": item.get("updatedAt")} for item in nodes]
+        return {"ok": True, "count": len(discussions), "categories": repository.get("discussionCategories", {}).get("nodes", []), "discussions": discussions}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_discussion(project: ProjectName, discussion_number: int, comment_limit: int = 50) -> dict:
+    """Read one repository discussion and bounded comments."""
+    try:
+        owner, repo = github_repo(project).split("/", 1); number = require_positive_id(discussion_number, "discussion number"); safe_limit = max(1, min(comment_limit, 100))
+        query = "query($owner:String!,$repo:String!,$number:Int!,$limit:Int!){repository(owner:$owner,name:$repo){discussion(number:$number){id number title body url createdAt updatedAt author{login} category{id name} answerChosenAt comments(first:$limit){nodes{id body createdAt updatedAt author{login} isAnswer}}}}}"
+        data = github_graphql(project, query, {"owner": owner, "repo": repo, "number": number, "limit": safe_limit}); item = (data.get("repository") or {}).get("discussion")
+        if not item: return {"ok": False, "error": "Discussion not found"}
+        comments = item.pop("comments", {}).get("nodes", [])
+        return {"ok": True, "discussion": item, "comments": comments, "comment_count": len(comments)}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
