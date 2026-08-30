@@ -2,6 +2,10 @@
 
 ## 1.1.0 — 2026-08-30
 
+- Added guarded deployment reads, creation, and status updates.
+- Added deployment-environment inspection and protected configuration updates.
+- Added repository and environment Actions variable management with value redaction.
+- Added GitHub Pages inspection, configuration, and build requests.
 - Added authenticated private Git fetch and push support for Quick Mode without storing tokens in remote URLs.
 - Preserved available pull request data when optional Checks or status permissions are unavailable.
 - Added the bounded `worker_context` tool with `summary`, `evidence`, and `full` escape-hatch levels.
