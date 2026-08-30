@@ -278,24 +278,30 @@ def main() -> None:
 
     config_dir = root / "config"
     auth = read_env(config_dir / "github-auth.env")
-    if auth.get("GITHUB_AUTH_MODE") != "fine_grained_pat":
-        fail("Quick repository import requires Fine-grained PAT mode")
-    token_input = Path(auth.get("GITHUB_TOKEN_PATH", str(config_dir / "github-token")))
-    if token_input.is_symlink():
-        fail("Unsafe GitHub token path")
-    token_path = token_input.resolve()
-    if config_dir.resolve() not in token_path.parents:
-        fail("Unsafe GitHub token path")
-    try:
-        token = token_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        fail("GitHub token file is not readable")
-    if len(token) < 20 or any(char.isspace() for char in token):
-        fail("GitHub token format is invalid")
-
-    info("Reading repositories allowed by your Fine-grained GitHub token...")
-    repositories = list_accessible_repositories(token)
-    token = ""
+    mode = auth.get("GITHUB_AUTH_MODE", "")
+    token_path: Path | None = None
+    app_payload: dict[str, Any] = {}
+    if mode == "fine_grained_pat":
+        token_input = Path(auth.get("GITHUB_TOKEN_PATH", str(config_dir / "github-token")))
+        if token_input.is_symlink():
+            fail("Unsafe GitHub token path")
+        token_path = token_input.resolve()
+        if config_dir.resolve() not in token_path.parents:
+            fail("Unsafe GitHub token path")
+        try:
+            token = token_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            fail("GitHub token file is not readable")
+        if len(token) < 20 or any(char.isspace() for char in token):
+            fail("GitHub token format is invalid")
+        info("Reading repositories allowed by your Fine-grained GitHub token...")
+        repositories = list_accessible_repositories(token)
+    elif mode == "github_app":
+        token, app_payload = github_app_installation_token(auth, config_dir)
+        info("Reading repositories installed for your GitHub App...")
+        repositories = list_installation_repositories(token, dict(app_payload.get("permissions") or {}))
+    else:
+        fail("GitHub authentication is not configured")
     if not repositories:
         fail("The token does not expose any repositories")
 
