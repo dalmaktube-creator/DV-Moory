@@ -399,6 +399,34 @@ def require_positive_id(value: int, label: str) -> int:
     return value
 
 
+def validate_environment_name(value: str) -> str:
+    clean = value.strip()
+    if not clean or len(clean) > 255 or any(ord(char) < 32 for char in clean):
+        raise ValueError("Environment name must be 1 to 255 printable characters")
+    return clean
+
+
+def validate_variable_name(value: str) -> str:
+    clean = value.strip().upper()
+    if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,99}", clean):
+        raise ValueError("Variable name must use 1 to 100 letters, numbers, or underscores")
+    return clean
+
+
+def validate_external_url(value: str, label: str) -> str:
+    clean = value.strip()
+    if not clean:
+        return ""
+    parsed = urllib.parse.urlparse(clean)
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc or len(clean) > 2_000:
+        raise ValueError(f"Invalid {label}")
+    return clean
+
+
+def quote_path_value(value: str) -> str:
+    return urllib.parse.quote(value, safe="")
+
+
 def compact_user(user: Any) -> str | None:
     return user.get("login") if isinstance(user, dict) else None
 
@@ -875,7 +903,7 @@ def moory_tool_catalog(profile: Literal["core", "git", "github", "all"] = "core"
     groups = {
         "core": ["moory_capabilities", "worker_context", "prepare_change_context", "validate_project", "apply_change_set", "commit_changes", "push_project", "inspect_ci_failure", "release_readiness"],
         "git": ["git_status", "recent_commits", "git_diff", "list_tracked_files", "read_tracked_file", "search_tracked_code", "sync_project", "apply_unified_patch", "validate_changes"],
-        "github": ["github_health", "github_permission_diagnostics", "github_repo_summary", "github_list_issues", "github_get_issue", "github_list_pull_requests", "github_get_pull_request", "github_list_workflow_runs", "github_get_workflow_run", "github_get_actions_log", "github_list_artifacts", "github_list_releases", "github_get_release"],
+        "github": ["github_health", "github_permission_diagnostics", "github_repo_summary", "github_list_issues", "github_get_issue", "github_list_pull_requests", "github_get_pull_request", "github_list_workflow_runs", "github_get_workflow_run", "github_get_actions_log", "github_list_artifacts", "github_list_releases", "github_get_release", "github_list_deployments", "github_get_deployment", "github_create_deployment", "github_create_deployment_status", "github_list_environments", "github_get_environment", "github_upsert_environment", "github_list_actions_variables", "github_upsert_actions_variable", "github_get_pages", "github_configure_pages", "github_request_pages_build"],
     }
     selected = groups if profile == "all" else {profile: groups[profile]}
     return {
