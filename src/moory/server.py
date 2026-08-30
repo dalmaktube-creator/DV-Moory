@@ -1023,9 +1023,24 @@ def apply_unified_patch(
                 project,
                 ["apply", "--check", "--whitespace=error-all", temporary_path],
             )
-            if not check["ok"] or check_only:
+            if not check["ok"]:
+                raw_error = check["error"] or check["output"]
+                category = "patch_check_failed"
+                suggestion = "Read the latest target range and regenerate the patch."
+                if "whitespace" in raw_error.lower():
+                    category = "whitespace_error"
+                    suggestion = "Remove whitespace errors and regenerate the patch."
+                elif "corrupt patch" in raw_error.lower():
+                    category = "invalid_patch"
+                    suggestion = "Generate a complete unified Git patch with valid hunk counts."
+                elif "patch does not apply" in raw_error.lower() or "while searching for" in raw_error.lower():
+                    category = "stale_context"
+                    suggestion = "Read the exact current file lines and regenerate the patch from that evidence."
                 audit("check_patch", project, check["ok"], check["error"])
-                return check
+                return {**check, "diagnostic": {"category": category, "suggestion": suggestion}, "paths": list(dict.fromkeys(patch_paths))}
+            if check_only:
+                audit("check_patch", project, True, "Patch preflight passed")
+                return {**check, "check_only": True, "paths": list(dict.fromkeys(patch_paths))}
 
             applied = run_git(
                 project,
