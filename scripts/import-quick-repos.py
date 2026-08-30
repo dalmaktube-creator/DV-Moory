@@ -264,6 +264,24 @@ def git_as_moory(root: Path, askpass: Path, token_path: Path, *args: str) -> Non
         fail(f"Git operation failed:\n{output}")
 
 
+def git_as_moory_ssh(root: Path, *args: str) -> None:
+    command = [
+        "runuser",
+        "-u",
+        "moory",
+        "--",
+        "env",
+        f"HOME={root}",
+        "GIT_TERMINAL_PROMPT=0",
+        "git",
+        *args,
+    ]
+    result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if result.returncode != 0:
+        output = result.stdout[-2000:]
+        fail(f"Git operation failed:\n{output}")
+
+
 def main() -> None:
     if os.geteuid() != 0:
         fail("Run this importer through sudo moory")
