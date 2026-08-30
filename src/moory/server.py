@@ -808,10 +808,26 @@ def worker_context(
     if operation not in {"overview", "search"} or detail not in {"summary", "evidence", "full"}:
         return {"ok": False, "error": "Invalid worker operation or detail level"}
 
-    files_result = run_git(project, ["ls-files"], output_limit=2_000_000)
-    if not files_result["ok"]:
-        return files_result
-    files = files_result["output"].splitlines()
+    head_result = run_git(project, ["rev-parse", "HEAD"])
+    if not head_result["ok"]:
+        return head_result
+    head_sha = head_result["output"].strip()
+    cache_key = (project, head_sha)
+    with CONTEXT_CACHE_LOCK:
+        cached = CONTEXT_CACHE.get(cache_key)
+    if cached is None:
+        files_result = run_git(project, ["ls-files"], output_limit=2_000_000)
+        if not files_result["ok"]:
+            return files_result
+        files = files_result["output"].splitlines()
+        with CONTEXT_CACHE_LOCK:
+            if len(CONTEXT_CACHE) >= MAX_CONTEXT_CACHE_ENTRIES:
+                CONTEXT_CACHE.pop(next(iter(CONTEXT_CACHE)))
+            CONTEXT_CACHE[cache_key] = {"files": list(files)}
+        cache_hit = False
+    else:
+        files = list(cached["files"])
+        cache_hit = True
 
     if operation == "overview":
         status = run_git(project, ["status", "--short", "--branch"])
