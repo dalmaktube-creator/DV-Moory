@@ -2969,6 +2969,70 @@ def github_update_code_scanning_alert(project: ProjectName, alert_number: int, s
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_dependabot_alerts(project: ProjectName, state: Literal["open", "dismissed", "fixed", "auto_dismissed", "all"] = "open", severity: Literal["low", "medium", "high", "critical", "all"] = "all", limit: int = 50, page: int = 1) -> dict:
+    """List repository Dependabot alerts."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        query = {"per_page": safe_limit, "page": safe_page, "state": "" if state == "all" else state, "severity": "" if severity == "all" else severity}
+        items = github_json(project, "/dependabot/alerts", query=query)
+        alerts = [
+            {"number": item.get("number"), "state": item.get("state"), "dependency": item.get("dependency"), "security_advisory": item.get("security_advisory"), "security_vulnerability": item.get("security_vulnerability"), "dismissed_reason": item.get("dismissed_reason"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "fixed_at": item.get("fixed_at"), "html_url": item.get("html_url")}
+            for item in items[:safe_limit]
+        ]
+        return {"ok": True, "count": len(alerts), "page": safe_page, "truncated": len(alerts) == safe_limit, "next_page": safe_page + 1 if len(alerts) == safe_limit else None, "alerts": alerts}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_dependabot_alert(project: ProjectName, alert_number: int) -> dict:
+    """Read one Dependabot alert."""
+    try:
+        number = require_positive_id(alert_number, "alert_number")
+        item = github_json(project, f"/dependabot/alerts/{number}")
+        return {"ok": True, "alert": {"number": item.get("number"), "state": item.get("state"), "dependency": item.get("dependency"), "security_advisory": item.get("security_advisory"), "security_vulnerability": item.get("security_vulnerability"), "dismissed_reason": item.get("dismissed_reason"), "dismissed_comment": item.get("dismissed_comment"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "fixed_at": item.get("fixed_at"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_code_quality_findings(project: ProjectName, ref: str = "", limit: int = 50, page: int = 1) -> dict:
+    """List repository code quality findings."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        data = github_json(project, "/code-quality/findings", query={"ref": validate_ref(ref, "quality ref") if ref else "", "per_page": safe_limit, "page": safe_page})
+        items = data.get("findings", data if isinstance(data, list) else [])
+        findings = [{"id": item.get("id"), "rule_id": item.get("rule_id"), "severity": item.get("severity"), "message": item.get("message"), "path": item.get("path"), "start_line": item.get("start_line"), "end_line": item.get("end_line"), "state": item.get("state"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at")} for item in items[:safe_limit]]
+        return {"ok": True, "count": len(findings), "page": safe_page, "truncated": len(findings) == safe_limit, "next_page": safe_page + 1 if len(findings) == safe_limit else None, "findings": findings}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_secret_scanning_bypass_requests(project: ProjectName, status: Literal["pending", "approved", "denied", "cancelled", "completed", "expired", "all"] = "pending", limit: int = 50, page: int = 1) -> dict:
+    """List delegated push-protection bypass requests."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        data = github_json(project, "/bypass-requests/secret-scanning", query={"status": "" if status == "all" else status, "per_page": safe_limit, "page": safe_page})
+        items = data.get("bypass_requests", data if isinstance(data, list) else [])
+        requests = [{"number": item.get("number"), "status": item.get("status"), "reason": item.get("reason"), "requester": compact_user(item.get("requester")), "reviewer": compact_user(item.get("reviewer")), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "expires_at": item.get("expires_at"), "html_url": item.get("html_url")} for item in items[:safe_limit]]
+        return {"ok": True, "count": len(requests), "page": safe_page, "truncated": len(requests) == safe_limit, "next_page": safe_page + 1 if len(requests) == safe_limit else None, "bypass_requests": requests}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_secret_scanning_bypass_request(project: ProjectName, request_number: int) -> dict:
+    """Read one delegated push-protection bypass request."""
+    try:
+        number = require_positive_id(request_number, "request_number")
+        item = github_json(project, f"/bypass-requests/secret-scanning/{number}")
+        return {"ok": True, "bypass_request": {"number": item.get("number"), "status": item.get("status"), "reason": item.get("reason"), "requester": compact_user(item.get("requester")), "reviewer": compact_user(item.get("reviewer")), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "expires_at": item.get("expires_at"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
