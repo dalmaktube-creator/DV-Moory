@@ -2853,6 +2853,71 @@ def github_get_artifact(project: ProjectName, artifact_id: int) -> dict:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_secret_scanning_alerts(project: ProjectName, state: Literal["open", "resolved", "all"] = "open", limit: int = 50, page: int = 1) -> dict:
+    """List secret scanning alerts without returning detected secret values."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        query = {"per_page": safe_limit, "page": safe_page, "state": "" if state == "all" else state}
+        items = github_json(project, "/secret-scanning/alerts", query=query)
+        alerts = [
+            {"number": item.get("number"), "state": item.get("state"), "resolution": item.get("resolution"), "secret_type": item.get("secret_type"), "secret_type_display_name": item.get("secret_type_display_name"), "validity": item.get("validity"), "publicly_leaked": item.get("publicly_leaked"), "push_protection_bypassed": item.get("push_protection_bypassed"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "resolved_at": item.get("resolved_at"), "html_url": item.get("html_url")}
+            for item in items[:safe_limit]
+        ]
+        return {"ok": True, "count": len(alerts), "page": safe_page, "truncated": len(alerts) == safe_limit, "next_page": safe_page + 1 if len(alerts) == safe_limit else None, "secrets_redacted": True, "alerts": alerts}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_secret_scanning_alert(project: ProjectName, alert_number: int) -> dict:
+    """Read one secret scanning alert without returning the secret value."""
+    try:
+        number = require_positive_id(alert_number, "alert_number")
+        item = github_json(project, f"/secret-scanning/alerts/{number}")
+        alert = {"number": item.get("number"), "state": item.get("state"), "resolution": item.get("resolution"), "resolution_comment": item.get("resolution_comment"), "secret_type": item.get("secret_type"), "secret_type_display_name": item.get("secret_type_display_name"), "validity": item.get("validity"), "publicly_leaked": item.get("publicly_leaked"), "push_protection_bypassed": item.get("push_protection_bypassed"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "resolved_at": item.get("resolved_at"), "html_url": item.get("html_url")}
+        return {"ok": True, "secrets_redacted": True, "alert": alert}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_secret_scanning_locations(project: ProjectName, alert_number: int, limit: int = 50, page: int = 1) -> dict:
+    """List bounded locations for one secret scanning alert."""
+    try:
+        number = require_positive_id(alert_number, "alert_number")
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_json(project, f"/secret-scanning/alerts/{number}/locations", query={"per_page": safe_limit, "page": safe_page})
+        locations = [{"type": item.get("type"), "details": item.get("details")} for item in items[:safe_limit]]
+        return {"ok": True, "alert_number": number, "count": len(locations), "page": safe_page, "truncated": len(locations) == safe_limit, "next_page": safe_page + 1 if len(locations) == safe_limit else None, "locations": locations}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_update_secret_scanning_alert(project: ProjectName, alert_number: int, state: Literal["open", "resolved"], resolution: Literal["false_positive", "wont_fix", "revoked", "used_in_tests"] | None = None, resolution_comment: str = "", confirmation: str = "") -> dict:
+    """Resolve or reopen a secret scanning alert after exact confirmation."""
+    try:
+        number = require_positive_id(alert_number, "alert_number")
+        if state == "resolved" and resolution is None:
+            return {"ok": False, "error": "Resolving a secret alert requires a resolution"}
+        if state == "open" and (resolution is not None or resolution_comment):
+            return {"ok": False, "error": "Reopening a secret alert forbids resolution fields"}
+        required = f"UPDATE SECRET ALERT {number} TO {state}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Secret alert update requires confirmation: {required}"}
+        payload: dict[str, Any] = {"state": state}
+        if resolution is not None: payload["resolution"] = resolution
+        if resolution_comment: payload["resolution_comment"] = validate_body(resolution_comment, 10_000)
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/secret-scanning/alerts/{number}", method="PATCH", body=payload, audit_action="github_update_secret_scanning_alert")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "secrets_redacted": True, "alert": {"number": item.get("number"), "state": item.get("state"), "resolution": item.get("resolution"), "resolved_at": item.get("resolved_at"), "updated_at": item.get("updated_at"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_update_secret_scanning_alert", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
