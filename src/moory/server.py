@@ -2285,6 +2285,7 @@ def github_create_release(
 def github_update_release(
     project: ProjectName,
     release_id: int,
+    tag_name: str | None = None,
     name: str | None = None,
     body: str | None = None,
     target_commitish: str | None = None,
@@ -2297,6 +2298,10 @@ def github_update_release(
         release = require_positive_id(release_id, "release_id")
         current = github_json(project, f"/releases/{release}")
         payload: dict[str, Any] = {}
+        if tag_name is not None:
+            if not current.get("draft"):
+                return {"ok": False, "error": "Only draft release tags can be changed"}
+            payload["tag_name"] = validate_tag(tag_name)
         if name is not None: payload["name"] = validate_title(name, "release name")
         if body is not None: payload["body"] = validate_body(body, 100_000)
         if target_commitish is not None:
