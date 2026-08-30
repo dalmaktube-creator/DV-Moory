@@ -67,15 +67,24 @@ EOF
 esac
 chown root:moory "$CONFIG/github-auth.env"; chmod 640 "$CONFIG/github-auth.env"
 
-printf "\n${BOLD}PUBLIC HTTPS ENDPOINT${RESET}\n"
-printf "  1) Configure with my domain (recommended)\n"
-printf "  2) Skip for now\n"
-ENDPOINT=$(ask "Select [1/2]")
-if [[ $ENDPOINT == 1 ]]; then
-  DOMAIN=$(ask "Domain pointing to this server (example: mcp.example.com)")
-  /usr/local/bin/moory-configure-caddy "$DOMAIN"
+if [[ -n ${MOORY_DOMAIN:-} ]]; then
+  printf "\n${BOLD}PUBLIC HTTPS ENDPOINT${RESET}\n"
+  if [[ -f /etc/moory/caddy.env ]]; then
+    ok "Using existing public domain: $MOORY_DOMAIN"
+  else
+    /usr/local/bin/moory-configure-caddy "$MOORY_DOMAIN"
+  fi
 else
-  warn "HTTPS setup skipped. Notion needs a public HTTPS MCP URL."
+  printf "\n${BOLD}PUBLIC HTTPS ENDPOINT${RESET}\n"
+  printf "  1) Configure with my domain (recommended)\n"
+  printf "  2) Skip for now\n"
+  ENDPOINT=$(ask "Select [1/2]")
+  if [[ $ENDPOINT == 1 ]]; then
+    DOMAIN=$(ask "Domain pointing to this server (example: mcp.example.com)")
+    /usr/local/bin/moory-configure-caddy "$DOMAIN"
+  else
+    warn "HTTPS setup skipped. Notion needs a public HTTPS MCP URL."
+  fi
 fi
 
 systemctl enable --now moory.service
