@@ -80,6 +80,13 @@ SECRET_PATTERN = (
     r"|ghp_" r"[A-Za-z0-9]{20,}"
 )
 
+GIT_SECRET_PATTERN = (
+    r"-----BEGIN (OPENSSH |RSA |EC )?PRIVATE KEY-----"
+    r"|(MOORY_TOKEN|GITHUB_TOKEN)[[:space:]]*=[[:space:]]*[A-Za-z0-9_./+=:-]{20,}"
+    r"|github_pat_[A-Za-z0-9_]{20,}"
+    r"|ghp_[A-Za-z0-9]{20,}"
+)
+
 mcp = MCPServer(
     name="Moory",
     version="1.0.0",
@@ -989,23 +996,28 @@ def commit_changes(project: ProjectName, message: str) -> dict:
 
         staged_check = run_git(project, ["diff", "--cached", "--check"])
         if not staged_check["ok"]:
+            run_git(project, ["restore", "--staged", "--", *paths])
             return staged_check
 
         secret_scan = run_git(
             project,
-            ["grep", "--cached", "-I", "-n", "-E", "-e", SECRET_PATTERN, "--", *paths],
+            ["grep", "--cached", "-I", "-n", "-E", "-e", GIT_SECRET_PATTERN, "--", *paths],
             output_limit=1_000,
         )
         if secret_scan["exit_code"] == 0:
+            run_git(project, ["restore", "--staged", "--", *paths])
             audit("commit", project, False, "Secret marker detected")
             return {
                 "ok": False,
                 "error": "Possible secret detected; commit blocked",
             }
         if secret_scan["exit_code"] not in (0, 1):
+            run_git(project, ["restore", "--staged", "--", *paths])
             return secret_scan
 
         committed = run_git(project, ["commit", "-m", clean_message])
+        if not committed["ok"]:
+            run_git(project, ["restore", "--staged", "--", *paths])
         audit("commit", project, committed["ok"], clean_message)
         return committed
 
