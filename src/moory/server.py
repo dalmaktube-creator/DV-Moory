@@ -320,6 +320,8 @@ def github_write_json(
     if (suffix and not suffix.startswith("/")) or ".." in suffix or "\x00" in suffix:
         raise ValueError("Invalid repository API path")
     repo = github_repo(project)
+    if not audit(f"{audit_action}_preflight", project, True, "write preflight"):
+        raise RuntimeError("Audit log unavailable; GitHub write blocked")
     token, _ = github_installation_token()
     status, raw, _ = _github_http(
         f"/repos/{repo}{suffix}",
