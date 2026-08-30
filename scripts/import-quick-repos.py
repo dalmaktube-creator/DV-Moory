@@ -222,6 +222,9 @@ def main() -> None:
     if not selected:
         ok("All selected repositories are already registered")
         return
+    if len(registry) + len(selected) > 50:
+        fail("Moory supports at most 50 registered projects; reduce the selection")
+
 
     repos_root = root / "repos"
     logs_root = root / "logs"
