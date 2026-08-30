@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
@@ -7,6 +8,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import tomllib
 import threading
 import time
 import urllib.error
