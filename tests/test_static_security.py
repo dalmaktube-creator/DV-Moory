@@ -93,5 +93,6 @@ assert '"$ROOT/venv/bin/python" -m pip install --force-reinstall' in update
 assert '"$ROOT/venv/bin/pip" install' not in update
 assert 'tools/list' in health
 assert 'github_health' in health
+assert 'authentication' in health
 assert 'projects registry validation' in health
 assert 'pull ' not in fetch
