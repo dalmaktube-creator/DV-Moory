@@ -1110,6 +1110,51 @@ def apply_unified_patch(
 
 
 @mcp.tool()
+def apply_change_set(
+    project: ProjectName,
+    patch_text: str,
+    check_only: bool = True,
+) -> dict:
+    """Preflight, apply, validate, and summarize one tracked-file change set with rollback on validation failure."""
+    if "--- /dev/null" in patch_text or "rename from " in patch_text or "copy from " in patch_text:
+        return {"ok": False, "error": "Transactional change sets currently support tracked-file edits and deletions only"}
+    preflight = apply_unified_patch(project, patch_text, check_only=True)
+    if not preflight.get("ok"):
+        return {"ok": False, "stage": "preflight", "preflight": preflight}
+    if check_only:
+        return {"ok": True, "stage": "preflight", "check_only": True, "paths": preflight.get("paths", [])}
+    applied = apply_unified_patch(project, patch_text, check_only=False)
+    if not applied.get("ok"):
+        return {"ok": False, "stage": "apply", "preflight": preflight, "applied": applied}
+    validation = validate_changes(project, staged=False)
+    diff = git_diff(project, staged=False)
+    if validation.get("ok"):
+        return {
+            "ok": True,
+            "stage": "validated",
+            "paths": preflight.get("paths", []),
+            "validation": validation,
+            "diff": diff,
+        }
+    paths = list(dict.fromkeys(str(path) for path in preflight.get("paths", []) if path))
+    rollback: list[dict[str, Any]] = []
+    if paths:
+        restored = run_git(project, ["restore", "--staged", "--worktree", "--", *paths])
+        rollback.append(restored)
+    clean = run_git(project, ["status", "--porcelain"])
+    audit("apply_change_set_rollback", project, clean.get("ok") and not clean.get("output", "").strip(), validation.get("error", "validation failed"))
+    return {
+        "ok": False,
+        "stage": "validation",
+        "error": "Validation failed; tracked-file changes were rolled back.",
+        "validation": validation,
+        "rollback": rollback,
+        "clean_after_rollback": clean.get("ok") and not clean.get("output", "").strip(),
+        "diff_before_rollback": diff,
+    }
+
+
+@mcp.tool()
 def commit_changes(project: ProjectName, message: str) -> dict:
     """Validate and commit all current changes on the approved branch."""
     clean_message = message.strip()
