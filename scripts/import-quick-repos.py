@@ -179,6 +179,48 @@ def list_accessible_repositories(token: str) -> list[dict[str, Any]]:
     return repositories
 
 
+def list_installation_repositories(token: str, permissions: dict[str, Any]) -> list[dict[str, Any]]:
+    repositories: list[dict[str, Any]] = []
+    for page in range(1, 11):
+        payload = github_json(token, "/installation/repositories", {"per_page": 100, "page": page})
+        if not isinstance(payload, dict) or not isinstance(payload.get("repositories"), list):
+            fail("GitHub App returned an unexpected repository list")
+        batch = payload["repositories"]
+        for item in batch:
+            if not isinstance(item, dict):
+                continue
+            full_name = str(item.get("full_name", ""))
+            if not REPO_RE.fullmatch(full_name):
+                continue
+            repositories.append(
+                {
+                    "repo": full_name,
+                    "branch": str(item.get("default_branch") or "main"),
+                    "private": bool(item.get("private")),
+                    "push": permissions.get("contents") == "write",
+                }
+            )
+        if len(batch) < 100:
+            break
+    return repositories
+
+
+def ensure_deploy_key(token: str, repo: str, title: str, public_key: str) -> None:
+    normalized = " ".join(public_key.strip().split()[:2])
+    existing = github_json(token, f"/repos/{repo}/keys", {"per_page": 100, "page": 1})
+    if isinstance(existing, list):
+        for item in existing:
+            if isinstance(item, dict) and " ".join(str(item.get("key", "")).split()[:2]) == normalized:
+                ok(f"Deploy key already exists for {repo}")
+                return
+    github_post_json(
+        token,
+        f"/repos/{repo}/keys",
+        {"title": title, "key": public_key.strip(), "read_only": False},
+    )
+    ok(f"Deploy key registered automatically for {repo}")
+
+
 def project_alias(repo: str, used: set[str]) -> str:
     owner, name = repo.split("/", 1)
 
