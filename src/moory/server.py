@@ -801,7 +801,7 @@ def worker_context(
     detail: Literal["summary", "evidence", "full"] = "summary",
     limit: int = 20,
 ) -> dict:
-    """Prepare bounded local context; use detail=full as an explicit escape hatch."""
+    """Start with summary, use evidence before edits, and full only when evidence is insufficient."""
     config = PROJECTS.get(project)
     if config is None:
         return {"ok": False, "error": "Unknown project"}
