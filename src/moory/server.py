@@ -360,6 +360,18 @@ def github_org_write_json(project: ProjectName, suffix: str, *, body: dict[str, 
     return {"status": status, "data": result}
 
 
+def github_graphql(project: ProjectName, query: str, variables: dict[str, Any], audit_action: str = "") -> dict[str, Any]:
+    github_repo(project)
+    if audit_action and not audit(f"{audit_action}_preflight", project, True, "write preflight"):
+        raise RuntimeError("Audit log unavailable; GitHub GraphQL write blocked")
+    token, _ = github_installation_token()
+    status, raw, _ = _github_http("/graphql", method="POST", token=token, body={"query": query, "variables": variables})
+    data = json.loads(raw.decode("utf-8")) if raw else {}
+    if data.get("errors"): raise RuntimeError("GitHub GraphQL: " + json.dumps(data["errors"])[:1000])
+    if audit_action: audit(audit_action, project, 200 <= status < 300, f"HTTP {status}")
+    return data.get("data", {})
+
+
 def validate_digest(value: str) -> str:
     clean = value.strip().lower()
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", clean):
