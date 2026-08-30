@@ -3539,6 +3539,45 @@ def github_update_repository_settings(project: ProjectName, description: str | N
         audit("github_update_repository_settings", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_collaborators(project: ProjectName, affiliation: Literal["outside", "direct", "all"] = "all", permission: Literal["pull", "triage", "push", "maintain", "admin", "all"] = "all", limit: int = 50, page: int = 1) -> dict:
+    """List direct and outside repository collaborators."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/collaborators", query={"affiliation": affiliation, "permission": "" if permission == "all" else permission, "per_page": safe_limit, "page": safe_page})
+        collaborators = [{"login": item.get("login"), "id": item.get("id"), "type": item.get("type"), "role_name": item.get("role_name"), "permissions": item.get("permissions"), "html_url": item.get("html_url")} for item in items[:safe_limit]]
+        return {"ok": True, "count": len(collaborators), "page": safe_page, "truncated": len(collaborators) == safe_limit, "collaborators": collaborators}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_upsert_collaborator(project: ProjectName, username: str, permission: Literal["pull", "triage", "push", "maintain", "admin"] = "pull", confirmation: str = "") -> dict:
+    """Invite or update a collaborator after exact confirmation."""
+    try:
+        clean = validate_title(username, "username")
+        if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})", clean): return {"ok": False, "error": "Invalid GitHub username"}
+        required = f"GRANT {permission} TO {clean}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Collaborator change requires confirmation: {required}"}
+        with WRITE_LOCK: result = github_write_json(project, f"/collaborators/{quote_path_value(clean)}", method="PUT", body={"permission": permission}, audit_action="github_upsert_collaborator")
+        invitation = result["data"] if isinstance(result["data"], dict) else {}
+        return {"ok": True, "status": result["status"], "username": clean, "permission": permission, "invitation": {"id": invitation.get("id"), "html_url": invitation.get("html_url")}}
+    except Exception as error:
+        audit("github_upsert_collaborator", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_repository_invitations(project: ProjectName, limit: int = 50, page: int = 1) -> dict:
+    """List pending repository invitations."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/invitations", query={"per_page": safe_limit, "page": safe_page})
+        invitations = [{"id": item.get("id"), "invitee": compact_user(item.get("invitee")), "inviter": compact_user(item.get("inviter")), "permissions": item.get("permissions"), "created_at": item.get("created_at"), "expired": item.get("expired"), "html_url": item.get("html_url")} for item in items[:safe_limit]]
+        return {"ok": True, "count": len(invitations), "page": safe_page, "truncated": len(invitations) == safe_limit, "invitations": invitations}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
