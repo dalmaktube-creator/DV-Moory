@@ -1492,13 +1492,15 @@ def github_list_issues(
     project: ProjectName,
     state: Literal["open", "closed", "all"] = "open",
     limit: int = 20,
+    page: int = 1,
 ) -> dict:
     """List repository issues, excluding pull requests."""
     try:
         safe_limit = max(1, min(limit, 100))
-        items = github_json(project, "/issues", query={"state": state, "per_page": 100, "sort": "updated", "direction": "desc"})
-        issues = [compact_issue(item) for item in items if "pull_request" not in item][:safe_limit]
-        return {"ok": True, "count": len(issues), "issues": issues}
+        safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/issues", query={"state": state, "per_page": safe_limit, "page": safe_page, "sort": "updated", "direction": "desc"})
+        issues = [compact_issue(item) for item in items if "pull_request" not in item]
+        return {"ok": True, "count": len(issues), "page": safe_page, "truncated": len(items) == safe_limit, "next_page": safe_page + 1 if len(items) == safe_limit else None, "issues": issues}
     except Exception as error:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
