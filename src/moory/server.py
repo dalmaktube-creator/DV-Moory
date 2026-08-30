@@ -1374,6 +1374,8 @@ def push_project(project: ProjectName) -> dict:
             audit("push", project, False, reason)
             return {"ok": False, "error": reason}
 
+        if not audit("push_preflight", project, True, "write preflight"):
+            return {"ok": False, "error": "Audit log unavailable; push blocked"}
         branch = PROJECTS[project]["branch"]
         pushed = run_git(project, ["push", "origin", branch], timeout=90)
         audit("push", project, pushed["ok"], pushed["error"])
