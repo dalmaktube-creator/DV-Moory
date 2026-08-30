@@ -189,7 +189,8 @@ def main() -> None:
         fail("The token does not expose any repositories")
 
     registry_path = config_dir / "projects.json"
-    registry = json.loads(registry_path.read_text(encoding="utf-8")) if registry_path.exists() else {}
+    original_registry_text = registry_path.read_text(encoding="utf-8") if registry_path.exists() else None
+    registry = json.loads(original_registry_text) if original_registry_text is not None else {}
     registered_repos = {str(item.get("repo")) for item in registry.values() if isinstance(item, dict)}
 
     print("\nRepositories available through this token:\n")
