@@ -2,6 +2,11 @@
 
 ## 1.1.0 — 2026-08-30
 
+- Added SPDX SBOM export and organization package inventory reads.
+- Added repository attestation reads and guarded Sigstore bundle creation.
+- Added guarded dependency snapshot submission with bounded sensitive-content checks.
+- Added linked-artifact storage and deployment reads plus guarded writes.
+- Added strict SHA-256 digest validation and organization-scoped API routing.
 - Added redacted secret-scanning reads, locations, and guarded resolution controls.
 - Added code-scanning reads plus guarded dismissal and reopen controls.
 - Added Dependabot, code-quality, and delegated bypass-request reads.

@@ -130,3 +130,17 @@ with tempfile.TemporaryDirectory() as temporary:
 
     blocked_publish = module.github_update_repository_security_advisory("demo", "GHSA-ABCD-EFGH-IJKL", state="published", confirmation="")
     assert not blocked_publish["ok"] and "PUBLISH SECURITY ADVISORY GHSA-ABCD-EFGH-IJKL" in blocked_publish["error"]
+
+    valid_digest = "sha256:" + "a" * 64
+    blocked_attestation = module.github_create_attestation("demo", {"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json", "verificationMaterial": {}, "dsseEnvelope": {}}, confirmation="")
+    assert not blocked_attestation["ok"] and "CREATE ATTESTATION" in blocked_attestation["error"]
+
+    snapshot = {"version": 0, "job": {}, "sha": "a" * 40, "ref": "refs/heads/main", "detector": {}, "manifests": {}}
+    blocked_snapshot = module.github_submit_dependency_snapshot("demo", snapshot, confirmation="")
+    assert not blocked_snapshot["ok"] and "SUBMIT DEPENDENCY SNAPSHOT" in blocked_snapshot["error"]
+
+    blocked_storage = module.github_create_artifact_storage_record("demo", "artifact", valid_digest, "https://registry.example.com", confirmation="")
+    assert not blocked_storage["ok"] and "STORE ARTIFACT artifact" in blocked_storage["error"]
+
+    blocked_artifact_deploy = module.github_create_artifact_deployment_record("demo", "artifact", valid_digest, "production", "web", confirmation="")
+    assert not blocked_artifact_deploy["ok"] and "DEPLOY ARTIFACT artifact TO production" in blocked_artifact_deploy["error"]

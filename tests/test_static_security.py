@@ -81,6 +81,15 @@ required = [
     "github_get_repository_security_advisory",
     "github_create_repository_security_advisory",
     "github_update_repository_security_advisory",
+    "github_get_sbom",
+    "github_list_attestations",
+    "github_create_attestation",
+    "github_list_packages",
+    "github_list_package_versions",
+    "github_submit_dependency_snapshot",
+    "github_list_artifact_metadata",
+    "github_create_artifact_storage_record",
+    "github_create_artifact_deployment_record",
 ]
 for value in required:
     assert value in source, value
