@@ -386,9 +386,9 @@ def validate_title(value: str, label: str = "title") -> str:
     return clean
 
 
-def validate_body(value: str, maximum: int = 60_000) -> str:
+def validate_body(value: str, maximum: int = 60_000, label: str = "body") -> str:
     if "\x00" in value or len(value) > maximum:
-        raise ValueError(f"Body must be at most {maximum} characters")
+        raise ValueError(f"{label} must be at most {maximum} characters")
     if redact_github_text(value) != value or re.search(SECRET_PATTERN, value, flags=re.IGNORECASE):
         raise ValueError("Possible secret detected; GitHub write blocked")
     return value.strip()
