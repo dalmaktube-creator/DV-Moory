@@ -86,6 +86,7 @@ assert '"next_page": safe_page + 1' in source
 assert 'trap rollback ERR' in caddy
 assert 'fetch --prune origin' in fetch
 assert 'NEXT_VENV=' in update
+assert 'chmod 755 "$NEXT_VENV"' in update
 assert 'VENV_SWAPPED=1' in update
 assert 'mv "$PREVIOUS_VENV" "$ROOT/venv"' in update
 assert '"$ROOT/venv/bin/python" -m pip install --force-reinstall' in update
