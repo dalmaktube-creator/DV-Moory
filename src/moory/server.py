@@ -2785,6 +2785,73 @@ def github_update_check_run(project: ProjectName, check_run_id: int, status: Lit
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_commit_statuses(project: ProjectName, ref: str, limit: int = 50, page: int = 1) -> dict:
+    """List commit statuses for a SHA or ref."""
+    try:
+        clean_ref = validate_ref(ref, "status ref")
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_json(project, f"/commits/{clean_ref}/statuses", query={"per_page": safe_limit, "page": safe_page})
+        statuses = [
+            {"id": item.get("id"), "sha": item.get("sha"), "state": item.get("state"), "context": item.get("context"), "description": item.get("description"), "target_url": item.get("target_url"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at")}
+            for item in items[:safe_limit]
+        ]
+        return {"ok": True, "count": len(statuses), "page": safe_page, "truncated": len(statuses) == safe_limit, "next_page": safe_page + 1 if len(statuses) == safe_limit else None, "statuses": statuses}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_create_commit_status(project: ProjectName, sha: str, state: Literal["error", "failure", "pending", "success"], context: str = "default", description: str = "", target_url: str = "", confirmation: str = "") -> dict:
+    """Create a commit status after exact confirmation."""
+    try:
+        clean_sha = sha.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40}", clean_sha):
+            return {"ok": False, "error": "sha must be a full 40-character commit SHA"}
+        clean_context = validate_title(context, "status context")
+        if len(clean_context) > 100:
+            return {"ok": False, "error": "status context must be at most 100 characters"}
+        clean_description = validate_body(description, 140)
+        payload: dict[str, Any] = {"state": state, "context": clean_context, "description": clean_description}
+        if target_url: payload["target_url"] = validate_external_url(target_url, "target_url")
+        required = f"SET STATUS {clean_context} {state} ON {clean_sha}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Commit status requires confirmation: {required}"}
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/statuses/{clean_sha}", method="POST", body=payload, audit_action="github_create_commit_status")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "commit_status": {"id": item.get("id"), "sha": item.get("sha"), "state": item.get("state"), "context": item.get("context"), "description": item.get("description"), "target_url": item.get("target_url"), "created_at": item.get("created_at")}}
+    except Exception as error:
+        audit("github_create_commit_status", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_list_repository_artifacts(project: ProjectName, name: str = "", limit: int = 50, page: int = 1) -> dict:
+    """List Actions artifacts across a repository."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        data = github_json(project, "/actions/artifacts", query={"name": validate_title(name, "artifact name") if name else "", "per_page": safe_limit, "page": safe_page})
+        artifacts = [
+            {"id": item.get("id"), "name": item.get("name"), "size_in_bytes": item.get("size_in_bytes"), "expired": item.get("expired"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "expires_at": item.get("expires_at"), "archive_download_url": item.get("archive_download_url"), "workflow_run": item.get("workflow_run")}
+            for item in data.get("artifacts", [])[:safe_limit]
+        ]
+        return {"ok": True, "total_count": data.get("total_count"), "count": len(artifacts), "page": safe_page, "truncated": len(artifacts) == safe_limit, "next_page": safe_page + 1 if len(artifacts) == safe_limit else None, "artifacts": artifacts}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_artifact(project: ProjectName, artifact_id: int) -> dict:
+    """Read one Actions artifact and its short-lived archive endpoint metadata."""
+    try:
+        artifact = require_positive_id(artifact_id, "artifact_id")
+        item = github_json(project, f"/actions/artifacts/{artifact}")
+        return {"ok": True, "artifact": {"id": item.get("id"), "name": item.get("name"), "size_in_bytes": item.get("size_in_bytes"), "expired": item.get("expired"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "expires_at": item.get("expires_at"), "archive_download_url": item.get("archive_download_url"), "workflow_run": item.get("workflow_run")}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
