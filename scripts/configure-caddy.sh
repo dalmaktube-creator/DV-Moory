@@ -113,6 +113,8 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: activ
   ufw allow 443/tcp >/dev/null
 fi
 
+caddy fmt --overwrite /etc/caddy/Caddyfile
+caddy fmt --overwrite /etc/caddy/conf.d/moory.caddy
 caddy validate --config /etc/caddy/Caddyfile
 systemctl daemon-reload
 systemctl restart moory.service
