@@ -976,8 +976,9 @@ def worker_context(
         "detail": detail,
         "query": query,
         "matches": matches,
-        "total_matches": len(raw_matches),
-        "truncated": len(raw_matches) > len(matches),
+        "total_matches": len(safe_raw_matches),
+        "filtered_sensitive_matches": filtered_sensitive_matches,
+        "truncated": len(safe_raw_matches) > len(matches),
         "available_detail_levels": list(DETAIL_LEVELS),
         "next_recommended_action": "Request evidence before editing." if detail == "summary" else "Read exact target ranges; use full only when this evidence is insufficient.",
     }
