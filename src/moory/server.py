@@ -3509,6 +3509,17 @@ def github_update_discussion(project: ProjectName, discussion_id: str, title: st
         audit("github_update_discussion", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_get_repository_settings(project: ProjectName) -> dict:
+    """Read bounded repository administration settings."""
+    try:
+        repo = github_json(project, "")
+        fields = ("id", "name", "full_name", "description", "homepage", "visibility", "private", "archived", "default_branch", "has_issues", "has_projects", "has_wiki", "has_discussions", "allow_squash_merge", "allow_merge_commit", "allow_rebase_merge", "allow_auto_merge", "delete_branch_on_merge", "web_commit_signoff_required")
+        return {"ok": True, "settings": {key: repo.get(key) for key in fields}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
