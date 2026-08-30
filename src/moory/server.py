@@ -1710,7 +1710,13 @@ def github_get_release(project: ProjectName, tag_name: str) -> dict:
         tag = tag_name.strip()
         if not tag or len(tag) > 150 or not re.fullmatch(r"[A-Za-z0-9._/+\-]+", tag):
             return {"ok": False, "error": "Invalid tag name"}
-        item = github_json(project, "/releases/tags/" + urllib.parse.quote(tag, safe=""))
+        try:
+            item = github_json(project, "/releases/tags/" + urllib.parse.quote(tag, safe=""))
+        except Exception as tag_error:
+            items = github_json(project, "/releases", query={"per_page": 100})
+            item = next((release for release in items if str(release.get("tag_name", "")) == tag), None)
+            if item is None:
+                raise tag_error
         return {"ok": True, "release": {**compact_release(item), "body": item.get("body")}}
     except Exception as error:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
