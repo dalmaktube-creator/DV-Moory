@@ -109,3 +109,12 @@ with tempfile.TemporaryDirectory() as temporary:
     assert variable["ok"] and variable["value_redacted"]
     assert captured["path"] == "/actions/variables" and captured["method"] == "POST"
     assert "public-value" not in json.dumps(variable)
+
+    blocked_workflow = module.github_set_workflow_state("demo", "ci.yml", "disable", confirmation="")
+    assert not blocked_workflow["ok"] and "DISABLE WORKFLOW ci.yml" in blocked_workflow["error"]
+
+    bad_check = module.github_create_check_run("demo", "Moory", "short", confirmation="")
+    assert not bad_check["ok"] and "40-character" in bad_check["error"]
+
+    blocked_status = module.github_create_commit_status("demo", "a" * 40, "success", confirmation="")
+    assert not blocked_status["ok"] and "SET STATUS default success ON" in blocked_status["error"]

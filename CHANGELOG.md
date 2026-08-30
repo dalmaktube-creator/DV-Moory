@@ -2,6 +2,10 @@
 
 ## 1.1.0 — 2026-08-30
 
+- Added workflow discovery plus guarded enable and disable controls.
+- Added guarded GitHub Check Run creation and lifecycle updates.
+- Added commit-status reads and guarded status creation.
+- Added repository-wide artifact discovery and artifact metadata reads.
 - Added guarded deployment reads, creation, and status updates.
 - Added deployment-environment inspection and protected configuration updates.
 - Added repository and environment Actions variable management with value redaction.

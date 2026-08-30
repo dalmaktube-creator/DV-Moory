@@ -54,6 +54,17 @@ required = [
     "github_get_pages",
     "github_configure_pages",
     "github_request_pages_build",
+    "github_list_workflows",
+    "github_get_workflow",
+    "github_set_workflow_state",
+    "github_list_repository_artifacts",
+    "github_get_artifact",
+    "github_list_commit_checks",
+    "github_get_check_run",
+    "github_create_check_run",
+    "github_update_check_run",
+    "github_list_commit_statuses",
+    "github_create_commit_status",
 ]
 for value in required:
     assert value in source, value
