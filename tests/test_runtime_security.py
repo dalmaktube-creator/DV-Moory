@@ -168,3 +168,15 @@ with tempfile.TemporaryDirectory() as temporary:
 
     blocked_queue = module.github_set_pull_request_queue_state("demo", 1, "enqueue", confirmation="")
     assert not blocked_queue["ok"] and "ENQUEUE PR #1" in blocked_queue["error"]
+
+    blocked_settings = module.github_update_repository_settings("demo", has_wiki=False, confirmation="")
+    assert not blocked_settings["ok"] and "UPDATE REPOSITORY SETTINGS" in blocked_settings["error"]
+
+    blocked_collaborator = module.github_upsert_collaborator("demo", "octocat", "admin", confirmation="")
+    assert not blocked_collaborator["ok"] and "GRANT admin TO octocat" in blocked_collaborator["error"]
+
+    blocked_ruleset = module.github_upsert_ruleset("demo", "main", "branch", "active", {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}}, [], confirmation="")
+    assert not blocked_ruleset["ok"] and "CREATE RULESET main" in blocked_ruleset["error"]
+
+    blocked_properties = module.github_update_custom_property_values("demo", [{"property_name": "environment", "value": "production"}], confirmation="")
+    assert not blocked_properties["ok"] and "UPDATE CUSTOM PROPERTIES" in blocked_properties["error"]

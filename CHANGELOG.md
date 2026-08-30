@@ -2,6 +2,11 @@
 
 ## 1.1.0 — 2026-08-30
 
+- Added bounded repository settings inventory and guarded non-destructive updates.
+- Added collaborator inventory, pending invitations, and guarded role grants.
+- Added repository ruleset inventory and guarded create/update controls.
+- Added repository custom property reads and guarded value updates.
+- Fixed package inventory for repositories owned by user accounts.
 - Added guarded label and milestone management.
 - Added pull request reviewer requests and issue assignee workflows.
 - Added GitHub Discussions reads, creation, comments, and updates through GraphQL.

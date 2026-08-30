@@ -104,6 +104,16 @@ required = [
     "github_update_discussion",
     "github_get_pull_request_queue_state",
     "github_set_pull_request_queue_state",
+    "github_get_repository_settings",
+    "github_update_repository_settings",
+    "github_list_collaborators",
+    "github_upsert_collaborator",
+    "github_list_repository_invitations",
+    "github_list_rulesets",
+    "github_get_ruleset",
+    "github_upsert_ruleset",
+    "github_get_custom_property_values",
+    "github_update_custom_property_values",
 ]
 for value in required:
     assert value in source, value
