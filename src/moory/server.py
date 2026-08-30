@@ -2287,6 +2287,7 @@ def github_update_release(
     release_id: int,
     name: str | None = None,
     body: str | None = None,
+    target_commitish: str | None = None,
     prerelease: bool | None = None,
     publish: bool | None = None,
     confirmation: str = "",
