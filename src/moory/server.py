@@ -1655,10 +1655,13 @@ def release_readiness(project: ProjectName, tag_name: str = "") -> dict:
     checks = {
         "allowed_branch": bool(branch_ok),
         "clean_worktree": bool(status.get("ok") and not status.get("output", "").strip()),
-        "remote_not_ahead": bool(sync.get("ok") and behind == 0),
+        "remote_fully_synced": bool(sync.get("ok") and ahead == 0 and behind == 0),
         "latest_ci_success": bool(latest and latest.get("status") == "completed" and latest.get("conclusion") == "success"),
+        "latest_ci_matches_head": bool(latest and head_sha and latest.get("head_sha") == head_sha),
         "changelog_present": bool(changelog.get("ok")),
+        "changelog_mentions_tag": changelog_mentions_tag,
         "tag_available": not tag_exists,
+        "github_release_available": not release_exists,
     }
     ready = all(checks.values())
     return {
