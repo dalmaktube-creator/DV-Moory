@@ -2473,6 +2473,63 @@ def github_create_deployment_status(project: ProjectName, deployment_id: int, st
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_environments(project: ProjectName, limit: int = 20, page: int = 1) -> dict:
+    """List repository deployment environments."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        data = github_json(project, "/environments", query={"per_page": safe_limit, "page": safe_page})
+        environments = [
+            {"id": item.get("id"), "name": item.get("name"), "url": item.get("html_url"), "protection_rules": item.get("protection_rules"), "deployment_branch_policy": item.get("deployment_branch_policy")}
+            for item in data.get("environments", [])[:safe_limit]
+        ]
+        return {"ok": True, "total_count": data.get("total_count"), "count": len(environments), "page": safe_page, "truncated": len(environments) == safe_limit, "next_page": safe_page + 1 if len(environments) == safe_limit else None, "environments": environments}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_environment(project: ProjectName, environment: str) -> dict:
+    """Read one deployment environment and its protection settings."""
+    try:
+        name = validate_environment_name(environment)
+        item = github_json(project, "/environments/" + quote_path_value(name))
+        return {"ok": True, "environment": {"id": item.get("id"), "name": item.get("name"), "url": item.get("html_url"), "protection_rules": item.get("protection_rules"), "deployment_branch_policy": item.get("deployment_branch_policy")}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_upsert_environment(project: ProjectName, environment: str, wait_timer: int = 0, prevent_self_review: bool = False, reviewer_user_ids: list[int] = [], reviewer_team_ids: list[int] = [], branch_policy: Literal["all", "protected", "custom"] = "all", confirmation: str = "") -> dict:
+    """Create or update an environment after exact confirmation CONFIGURE ENVIRONMENT name."""
+    try:
+        name = validate_environment_name(environment)
+        if not isinstance(wait_timer, int) or isinstance(wait_timer, bool) or not 0 <= wait_timer <= 43_200:
+            return {"ok": False, "error": "wait_timer must be between 0 and 43200 minutes"}
+        if len(reviewer_user_ids) + len(reviewer_team_ids) > 6:
+            return {"ok": False, "error": "At most six reviewers are allowed"}
+        if confirmation.strip() != f"CONFIGURE ENVIRONMENT {name}":
+            return {"ok": False, "error": f"Environment update requires confirmation: CONFIGURE ENVIRONMENT {name}"}
+        reviewers = [{"type": "User", "id": require_positive_id(value, "reviewer user id")} for value in reviewer_user_ids]
+        reviewers.extend({"type": "Team", "id": require_positive_id(value, "reviewer team id")} for value in reviewer_team_ids)
+        policy: dict[str, bool] | None = None
+        if branch_policy == "protected":
+            policy = {"protected_branches": True, "custom_branch_policies": False}
+        elif branch_policy == "custom":
+            policy = {"protected_branches": False, "custom_branch_policies": True}
+        payload = {
+            "wait_timer": wait_timer, "prevent_self_review": bool(prevent_self_review),
+            "reviewers": reviewers or None, "deployment_branch_policy": policy,
+        }
+        with WRITE_LOCK:
+            result = github_write_json(project, "/environments/" + quote_path_value(name), method="PUT", body=payload, audit_action="github_upsert_environment")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "environment": {"id": item.get("id"), "name": item.get("name"), "url": item.get("html_url"), "protection_rules": item.get("protection_rules"), "deployment_branch_policy": item.get("deployment_branch_policy")}}
+    except Exception as error:
+        audit("github_upsert_environment", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
