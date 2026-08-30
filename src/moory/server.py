@@ -1613,6 +1613,8 @@ def release_readiness(project: ProjectName, tag_name: str = "") -> dict:
     status = run_git(project, ["status", "--porcelain"])
     branch_result = run_git(project, ["branch", "--show-current"])
     branch_ok = branch_result.get("ok") and branch_result.get("output", "").strip() == config["branch"]
+    head_result = run_git(project, ["rev-parse", "HEAD"])
+    head_sha = head_result.get("output", "").strip() if head_result.get("ok") else ""
     sync = run_git(project, ["rev-list", "--left-right", "--count", f"HEAD...origin/{config['branch']}"])
     ahead = behind = 0
     if sync.get("ok"):
