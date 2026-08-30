@@ -54,8 +54,8 @@ The original granular read tools remain available, so agents can always inspect 
 
 ## Supported platform
 
-- Ubuntu 22.04 or 24.04
-- Python 3.11+
+- Ubuntu 24.04
+- Python 3.12+
 - systemd
 - Caddy for public HTTPS
 

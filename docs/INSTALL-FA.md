@@ -2,7 +2,7 @@
 
 ## روش پیشنهادی
 
-پس از عمومی‌شدن Repository، فقط یک فرمان اولیه لازم است:
+برای نصب روی یک سرور تازه با Ubuntu 24.04 فقط یک فرمان لازم است:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dalmaktube-creator/DV-Moory/main/install.sh | sudo bash
