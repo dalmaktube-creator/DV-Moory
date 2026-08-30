@@ -63,5 +63,7 @@ install -o root -g root -m 644 "$SOURCE/systemd/moory-fetch.timer" /etc/systemd/
 systemctl daemon-reload
 systemctl restart moory
 systemctl is-active --quiet moory
+rm -rf "$PREVIOUS_VENV"
+VENV_SWAPPED=0
 rm -rf "$BACKUP"; trap - ERR
 printf '\033[38;5;82m✔ Moory updated successfully.\033[0m\n'
