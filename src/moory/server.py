@@ -3230,6 +3230,52 @@ def github_submit_dependency_snapshot(project: ProjectName, snapshot: dict[str, 
         audit("github_submit_dependency_snapshot", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_artifact_metadata(project: ProjectName, subject_digest: str) -> dict:
+    """List organization storage and deployment records for an artifact digest."""
+    try:
+        digest = validate_digest(subject_digest); path = "/artifacts/" + quote_path_value(digest) + "/metadata/"
+        storage = github_org_json(project, path + "storage-records")
+        deployments = github_org_json(project, path + "deployment-records")
+        return {"ok": True, "subject_digest": digest, "storage_records": storage.get("storage_records", []), "deployment_records": deployments.get("deployment_records", [])}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_create_artifact_storage_record(project: ProjectName, name: str, subject_digest: str, registry_url: str, artifact_url: str = "", version: str = "", repository: str = "", status: Literal["active", "eol", "deleted"] = "active", confirmation: str = "") -> dict:
+    """Create an organization artifact storage record after exact confirmation."""
+    try:
+        digest = validate_digest(subject_digest); clean_name = validate_title(name, "artifact name")
+        required = f"STORE ARTIFACT {clean_name}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Storage record requires confirmation: {required}"}
+        payload = {"name": clean_name, "digest": digest, "registry_url": validate_external_url(registry_url, "registry_url"), "status": status, "github_repository": github_repo(project), "return_records": True}
+        if artifact_url: payload["artifact_url"] = validate_external_url(artifact_url, "artifact_url")
+        if version: payload["version"] = validate_title(version, "version")
+        if repository: payload["repository"] = validate_title(repository, "registry repository")
+        with WRITE_LOCK: result = github_org_write_json(project, "/artifacts/metadata/storage-record", body=payload, audit_action="github_create_artifact_storage_record")
+        return {"ok": True, "status": result["status"], "records": result["data"]}
+    except Exception as error:
+        audit("github_create_artifact_storage_record", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_create_artifact_deployment_record(project: ProjectName, name: str, subject_digest: str, logical_environment: str, deployment_name: str, status: Literal["deployed", "decommissioned"] = "deployed", physical_environment: str = "", cluster: str = "", version: str = "", runtime_risks: list[Literal["critical-resource", "internet-exposed", "lateral-movement", "sensitive-data"]] = [], confirmation: str = "") -> dict:
+    """Create or update an artifact deployment record after exact confirmation."""
+    try:
+        digest = validate_digest(subject_digest); clean_name = validate_title(name, "artifact name")
+        required = f"DEPLOY ARTIFACT {clean_name} TO {logical_environment.strip()}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Deployment record requires confirmation: {required}"}
+        payload = {"name": clean_name, "digest": digest, "status": status, "logical_environment": validate_title(logical_environment, "logical environment"), "deployment_name": validate_title(deployment_name, "deployment name"), "runtime_risks": list(dict.fromkeys(runtime_risks)), "github_repository": github_repo(project), "return_records": True}
+        if physical_environment: payload["physical_environment"] = validate_title(physical_environment, "physical environment")
+        if cluster: payload["cluster"] = validate_title(cluster, "cluster")
+        if version: payload["version"] = validate_title(version, "version")
+        with WRITE_LOCK: result = github_org_write_json(project, "/artifacts/metadata/deployment-record", body=payload, audit_action="github_create_artifact_deployment_record")
+        return {"ok": True, "status": result["status"], "records": result["data"]}
+    except Exception as error:
+        audit("github_create_artifact_deployment_record", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
