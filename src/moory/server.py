@@ -1691,13 +1691,14 @@ def release_readiness(project: ProjectName, tag_name: str = "") -> dict:
 
 
 @mcp.tool()
-def github_list_releases(project: ProjectName, limit: int = 20) -> dict:
+def github_list_releases(project: ProjectName, limit: int = 20, page: int = 1) -> dict:
     """List releases and their assets."""
     try:
         safe_limit = max(1, min(limit, 100))
-        items = github_json(project, "/releases", query={"per_page": safe_limit})
+        safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/releases", query={"per_page": safe_limit, "page": safe_page})
         releases = [compact_release(item) for item in items[:safe_limit]]
-        return {"ok": True, "count": len(releases), "releases": releases}
+        return {"ok": True, "count": len(releases), "page": safe_page, "truncated": len(items) == safe_limit, "next_page": safe_page + 1 if len(items) == safe_limit else None, "releases": releases}
     except Exception as error:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
