@@ -856,9 +856,15 @@ def worker_context(
         if detail in {"evidence", "full"}:
             result["top_level"] = sorted({path.split("/", 1)[0] for path in files})[:100]
             result["recent_commits"] = run_git(project, ["log", "-5", "--pretty=format:%h|%s"])["output"].splitlines()
+            result["repository_map"] = {
+                "tests": [path for path in files if "test" in path.lower()][:30],
+                "workflows": [path for path in files if path.startswith(".github/workflows/")][:30],
+                "configuration": [path for path in files if Path(path).name.lower() in {"pyproject.toml", "package.json", "build.gradle", "settings.gradle", "dockerfile", "requirements.txt", "requirements.lock"}][:30],
+            }
         if detail == "full":
             result["files"] = files[:500]
             result["files_truncated"] = len(files) > 500
+            result["truncated"] = len(files) > 500
         return result
 
     if not query or len(query) > 200:
@@ -867,7 +873,7 @@ def worker_context(
     safe_limit = min(requested, 10 if detail == "summary" else 30 if detail == "evidence" else 100)
     grep = run_git(project, ["grep", "-n", "-I", "--fixed-strings", "--", query], output_limit=2_000_000)
     if grep["exit_code"] == 1:
-        return {"ok": True, "operation": "search", "detail": detail, "query": query, "matches": [], "truncated": False}
+        return {"ok": True, "operation": "search", "detail": detail, "query": query, "matches": [], "total_matches": 0, "truncated": False, "available_detail_levels": list(DETAIL_LEVELS), "next_recommended_action": "Try another fixed-text query or inspect the repository overview."}
     if not grep["ok"]:
         return grep
     raw_matches = grep["output"].splitlines()
@@ -897,6 +903,8 @@ def worker_context(
         "matches": matches,
         "total_matches": len(raw_matches),
         "truncated": len(raw_matches) > len(matches),
+        "available_detail_levels": list(DETAIL_LEVELS),
+        "next_recommended_action": "Request evidence before editing." if detail == "summary" else "Read exact target ranges; use full only when this evidence is insufficient.",
     }
 
 
