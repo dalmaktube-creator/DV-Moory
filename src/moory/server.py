@@ -2428,6 +2428,51 @@ def github_get_deployment(project: ProjectName, deployment_id: int) -> dict:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_create_deployment(project: ProjectName, ref: str, environment: str = "production", task: str = "deploy", description: str = "", transient_environment: bool = False, production_environment: bool = False, confirmation: str = "") -> dict:
+    """Create a deployment after exact confirmation DEPLOY ref TO environment."""
+    try:
+        clean_ref = validate_ref(ref, "deployment ref")
+        clean_environment = validate_environment_name(environment)
+        clean_task = validate_ref(task, "deployment task")
+        clean_description = validate_body(description, 140)
+        if confirmation.strip() != f"DEPLOY {clean_ref} TO {clean_environment}":
+            return {"ok": False, "error": f"Deployment requires confirmation: DEPLOY {clean_ref} TO {clean_environment}"}
+        payload = {
+            "ref": clean_ref, "environment": clean_environment, "task": clean_task,
+            "description": clean_description, "auto_merge": False, "transient_environment": bool(transient_environment),
+            "production_environment": bool(production_environment),
+        }
+        with WRITE_LOCK:
+            result = github_write_json(project, "/deployments", method="POST", body=payload, audit_action="github_create_deployment")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "deployment": {"id": item.get("id"), "sha": item.get("sha"), "ref": item.get("ref"), "environment": item.get("environment"), "task": item.get("task"), "created_at": item.get("created_at")}}
+    except Exception as error:
+        audit("github_create_deployment", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_create_deployment_status(project: ProjectName, deployment_id: int, state: Literal["error", "failure", "inactive", "in_progress", "queued", "pending", "success"], description: str = "", environment: str = "", log_url: str = "", environment_url: str = "", auto_inactive: bool = True, confirmation: str = "") -> dict:
+    """Create a deployment status after exact confirmation SET DEPLOYMENT id state."""
+    try:
+        deployment = require_positive_id(deployment_id, "deployment_id")
+        if confirmation.strip() != f"SET DEPLOYMENT {deployment} {state}":
+            return {"ok": False, "error": f"Status update requires confirmation: SET DEPLOYMENT {deployment} {state}"}
+        payload: dict[str, Any] = {"state": state, "auto_inactive": bool(auto_inactive)}
+        if description: payload["description"] = validate_body(description, 140)
+        if environment: payload["environment"] = validate_environment_name(environment)
+        if log_url: payload["log_url"] = validate_external_url(log_url, "log_url")
+        if environment_url: payload["environment_url"] = validate_external_url(environment_url, "environment_url")
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/deployments/{deployment}/statuses", method="POST", body=payload, audit_action="github_create_deployment_status")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "deployment_status": {"id": item.get("id"), "state": item.get("state"), "description": item.get("description"), "environment": item.get("environment"), "log_url": item.get("log_url"), "environment_url": item.get("environment_url"), "created_at": item.get("created_at")}}
+    except Exception as error:
+        audit("github_create_deployment_status", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
