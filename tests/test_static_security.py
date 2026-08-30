@@ -81,6 +81,8 @@ assert 'Domain, port & HTTPS' in menu
 assert 'Backup & restore' in menu
 assert '-C "$ROOT" config/projects.json' in menu
 assert 'Backup contains unexpected files' in restore
+assert 'Restore health check failed; rolling back registry' in restore
+assert '"next_page": safe_page + 1' in server
 assert 'trap rollback ERR' in caddy
 assert 'fetch --prune origin' in fetch
 assert 'NEXT_VENV=' in update
