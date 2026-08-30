@@ -39,6 +39,7 @@ trap rollback ERR
 git -C "$SOURCE" fetch --prune origin
 git -C "$SOURCE" pull --ff-only origin main
 python3 -m venv "$NEXT_VENV"
+chmod 755 "$NEXT_VENV"
 "$NEXT_VENV/bin/pip" install -r "$SOURCE/requirements.lock"
 "$NEXT_VENV/bin/python" -m py_compile "$SOURCE/src/moory/server.py"
 mv "$ROOT/venv" "$PREVIOUS_VENV"
