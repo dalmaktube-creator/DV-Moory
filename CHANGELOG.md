@@ -2,6 +2,11 @@
 
 ## 1.1.0 — 2026-08-30
 
+- Added redacted secret-scanning reads, locations, and guarded resolution controls.
+- Added code-scanning reads plus guarded dismissal and reopen controls.
+- Added Dependabot, code-quality, and delegated bypass-request reads.
+- Added repository security advisory reads and guarded draft/update/publish tools.
+- Preserved the no-delete policy across all security tooling.
 - Added workflow discovery plus guarded enable and disable controls.
 - Added guarded GitHub Check Run creation and lifecycle updates.
 - Added commit-status reads and guarded status creation.

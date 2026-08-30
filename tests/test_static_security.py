@@ -65,6 +65,22 @@ required = [
     "github_update_check_run",
     "github_list_commit_statuses",
     "github_create_commit_status",
+    "github_list_secret_scanning_alerts",
+    "github_get_secret_scanning_alert",
+    "github_list_secret_scanning_locations",
+    "github_update_secret_scanning_alert",
+    "github_list_code_scanning_alerts",
+    "github_get_code_scanning_alert",
+    "github_update_code_scanning_alert",
+    "github_list_dependabot_alerts",
+    "github_get_dependabot_alert",
+    "github_list_code_quality_findings",
+    "github_list_secret_scanning_bypass_requests",
+    "github_get_secret_scanning_bypass_request",
+    "github_list_repository_security_advisories",
+    "github_get_repository_security_advisory",
+    "github_create_repository_security_advisory",
+    "github_update_repository_security_advisory",
 ]
 for value in required:
     assert value in source, value

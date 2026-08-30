@@ -118,3 +118,15 @@ with tempfile.TemporaryDirectory() as temporary:
 
     blocked_status = module.github_create_commit_status("demo", "a" * 40, "success", confirmation="")
     assert not blocked_status["ok"] and "SET STATUS default success ON" in blocked_status["error"]
+
+    blocked_secret = module.github_update_secret_scanning_alert("demo", 1, "resolved", "false_positive", confirmation="")
+    assert not blocked_secret["ok"] and "UPDATE SECRET ALERT 1 TO resolved" in blocked_secret["error"]
+
+    blocked_code = module.github_update_code_scanning_alert("demo", 1, "dismissed", "false positive", confirmation="")
+    assert not blocked_code["ok"] and "UPDATE CODE ALERT 1 TO dismissed" in blocked_code["error"]
+
+    blocked_advisory = module.github_create_repository_security_advisory("demo", "Test advisory", "Safe description", "high", "pip", "demo", "< 1.0", confirmation="")
+    assert not blocked_advisory["ok"] and "CREATE SECURITY ADVISORY Test advisory" in blocked_advisory["error"]
+
+    blocked_publish = module.github_update_repository_security_advisory("demo", "GHSA-ABCD-EFGH-IJKL", state="published", confirmation="")
+    assert not blocked_publish["ok"] and "PUBLISH SECURITY ADVISORY GHSA-ABCD-EFGH-IJKL" in blocked_publish["error"]
