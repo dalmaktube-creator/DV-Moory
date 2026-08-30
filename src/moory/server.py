@@ -3465,10 +3465,10 @@ def github_set_pull_request_queue_state(project: ProjectName, pull_number: int, 
     """Add or remove a pull request from the merge queue after exact confirmation."""
     try:
         owner, repo = github_repo(project).split("/", 1); number = require_positive_id(pull_number, "pull number")
-        query = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id mergeQueueEntry{id}}}}"; pull = github_graphql(project, query, {"owner": owner, "repo": repo, "number": number})["repository"]["pullRequest"]
-        if not pull: return {"ok": False, "error": "Pull request not found"}
         required = f"{action.upper()} PR #{number}"
         if confirmation.strip() != required: return {"ok": False, "error": f"Merge queue change requires confirmation: {required}"}
+        query = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id mergeQueueEntry{id}}}}"; pull = github_graphql(project, query, {"owner": owner, "repo": repo, "number": number})["repository"]["pullRequest"]
+        if not pull: return {"ok": False, "error": "Pull request not found"}
         if action == "enqueue": mutation = "mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id position state estimatedTimeToMerge}}}"; variables = {"id": pull["id"]}; key = "enqueuePullRequest"
         else: mutation = "mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id position state}}}"; variables = {"id": pull["id"]}; key = "dequeuePullRequest"
         with WRITE_LOCK: data = github_graphql(project, mutation, variables, "github_set_pull_request_queue_state")
