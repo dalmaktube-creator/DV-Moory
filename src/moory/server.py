@@ -1153,6 +1153,47 @@ def github_health() -> dict:
 
 
 @mcp.tool()
+def github_permission_diagnostics(project: ProjectName) -> dict:
+    """Probe safe GitHub read capabilities and explain recommended write permissions without mutating data."""
+    probes: dict[str, str] = {}
+    try:
+        repo = github_json(project, "")
+        branch = str(repo.get("default_branch") or PROJECTS[project]["branch"])
+        commit = github_json(project, "/commits/" + urllib.parse.quote(branch, safe=""))
+        sha = str(commit.get("sha", ""))
+        endpoints = {
+            "metadata_read": "",
+            "issues_read": "/issues",
+            "pull_requests_read": "/pulls",
+            "actions_read": "/actions/runs",
+        }
+        for name, suffix in endpoints.items():
+            try:
+                github_json(project, suffix, query={"per_page": 1} if suffix else None)
+                probes[name] = "available"
+            except Exception as error:
+                probes[name] = "unavailable: " + redact_github_text(str(error))[:160]
+        if sha:
+            for name, suffix in {"checks_read": f"/commits/{sha}/check-runs", "statuses_read": f"/commits/{sha}/status"}.items():
+                try:
+                    github_json(project, suffix, query={"per_page": 1})
+                    probes[name] = "available"
+                except Exception as error:
+                    probes[name] = "unavailable: " + redact_github_text(str(error))[:160]
+        missing = [name for name, value in probes.items() if value.startswith("unavailable")]
+        return {
+            "ok": not missing,
+            "project": project,
+            "safe_read_probes": probes,
+            "missing_read_capabilities": missing,
+            "write_permissions": "Not probed because diagnostics must not mutate repositories.",
+            "recommended_permissions": {"Metadata": "read", "Contents": "read/write", "Issues": "read/write", "Pull requests": "read/write", "Actions": "read/write", "Checks": "read", "Commit statuses": "read/write"},
+        }
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
 def github_repo_summary(project: ProjectName) -> dict:
     """Read repository metadata and current open issue and pull request counts."""
     try:
