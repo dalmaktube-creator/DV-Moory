@@ -3477,6 +3477,22 @@ def github_set_pull_request_queue_state(project: ProjectName, pull_number: int, 
         audit("github_set_pull_request_queue_state", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_update_discussion(project: ProjectName, discussion_id: str, title: str | None = None, body: str | None = None, category_id: str | None = None, confirmation: str = "") -> dict:
+    """Update a discussion after exact confirmation."""
+    try:
+        clean_id = validate_title(discussion_id, "discussion id")
+        if title is None and body is None and category_id is None: return {"ok": False, "error": "At least one discussion change is required"}
+        required = f"UPDATE DISCUSSION {clean_id}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Discussion update requires confirmation: {required}"}
+        variables = {"id": clean_id, "title": validate_title(title, "discussion title") if title is not None else None, "body": validate_body(body, 60000, "discussion body") if body is not None else None, "category": validate_title(category_id, "category id") if category_id is not None else None}
+        query = "mutation($id:ID!,$title:String,$body:String,$category:ID){updateDiscussion(input:{discussionId:$id,title:$title,body:$body,categoryId:$category}){discussion{id number title body url category{id name} updatedAt}}}"
+        with WRITE_LOCK: data = github_graphql(project, query, variables, "github_update_discussion")
+        return {"ok": True, "discussion": data["updateDiscussion"]["discussion"]}
+    except Exception as error:
+        audit("github_update_discussion", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
