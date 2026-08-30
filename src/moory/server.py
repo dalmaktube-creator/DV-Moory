@@ -1421,7 +1421,7 @@ def github_health() -> dict:
             item = json.loads(raw.decode("utf-8"))
             if item.get("full_name") == repo:
                 accessible.append(repo)
-        exact_scope = bool(registered) and accessible == registered
+        scope_matches_registry = bool(registered) and accessible == registered
         if token_info.get("auth_mode") == "github_app":
             _, raw, _ = _github_http("/installation/repositories?per_page=100", token=token)
             installed = json.loads(raw.decode("utf-8"))
@@ -1429,15 +1429,18 @@ def github_health() -> dict:
                 item.get("full_name") for item in installed.get("repositories", [])
                 if isinstance(item, dict) and item.get("full_name")
             )
-            exact_scope = installed_repos == registered
+            # A GitHub App installation may expose more repositories than Moory
+            # has registered. The registry remains the execution allowlist, so
+            # health only needs every registered repository to be installed.
+            scope_matches_registry = bool(registered) and set(registered).issubset(set(installed_repos))
         _, rate_raw, _ = _github_http("/rate_limit", token=token)
         rate = json.loads(rate_raw.decode("utf-8")).get("rate", {})
         return {
-            "ok": exact_scope, "authentication": "ok", "auth_mode": token_info.get("auth_mode"),
+            "ok": scope_matches_registry, "authentication": "ok", "auth_mode": token_info.get("auth_mode"),
             "token_expires_at": token_info.get("expires_at"),
             "repository_selection": token_info.get("repository_selection"),
             "permissions": token_info.get("permissions"), "repositories": accessible,
-            "scope_matches_registry": exact_scope,
+            "scope_matches_registry": scope_matches_registry,
             "rate_limit": {"limit": rate.get("limit"), "remaining": rate.get("remaining"), "reset": rate.get("reset")},
         }
     except Exception as error:

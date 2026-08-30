@@ -28,6 +28,7 @@ required = [
     'remote_fully_synced',
     'latest_ci_matches_head',
     'github_release_available',
+    'set(registered).issubset(set(installed_repos))',
     'Audit log unavailable; GitHub write blocked',
     'apply_patch_preflight',
     'error_groups',
