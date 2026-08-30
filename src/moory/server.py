@@ -3318,6 +3318,35 @@ def github_upsert_label(project: ProjectName, name: str, color: str, description
         audit("github_upsert_label", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_milestones(project: ProjectName, state: Literal["open", "closed", "all"] = "open", limit: int = 50, page: int = 1) -> dict:
+    """List repository milestones."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/milestones", query={"state": state, "per_page": safe_limit, "page": safe_page})
+        milestones = [{"number": item.get("number"), "title": item.get("title"), "state": item.get("state"), "description": item.get("description"), "due_on": item.get("due_on"), "open_issues": item.get("open_issues"), "closed_issues": item.get("closed_issues")} for item in items[:safe_limit]]
+        return {"ok": True, "count": len(milestones), "page": safe_page, "truncated": len(milestones) == safe_limit, "milestones": milestones}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_upsert_milestone(project: ProjectName, title: str, milestone_number: int = 0, state: Literal["open", "closed"] = "open", description: str = "", due_on: str = "", confirmation: str = "") -> dict:
+    """Create or update a milestone after exact confirmation."""
+    try:
+        clean_title = validate_title(title, "milestone title"); required = f"UPSERT MILESTONE {clean_title}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Milestone change requires confirmation: {required}"}
+        payload = {"title": clean_title, "state": state, "description": validate_body(description, 1000, "description")}
+        if due_on:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", due_on): return {"ok": False, "error": "due_on must be an ISO UTC timestamp"}
+            payload["due_on"] = due_on
+        path = "/milestones" if milestone_number <= 0 else f"/milestones/{require_positive_id(milestone_number, 'milestone number')}"; method = "POST" if milestone_number <= 0 else "PATCH"
+        with WRITE_LOCK: result = github_write_json(project, path, method=method, body=payload, audit_action="github_upsert_milestone")
+        return {"ok": True, "status": result["status"], "milestone": result["data"]}
+    except Exception as error:
+        audit("github_upsert_milestone", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
