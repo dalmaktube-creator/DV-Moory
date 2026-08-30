@@ -178,7 +178,7 @@ def _github_http(
 ) -> tuple[int, bytes, dict[str, str]]:
     if not path.startswith("/") or "\x00" in path:
         raise ValueError("Invalid GitHub API path")
-    allowed_prefixes = ("/repos/", "/orgs/", "/graphql", "/installation/", "/rate_limit")
+    allowed_prefixes = ("/repos/", "/orgs/", "/users/", "/graphql", "/installation/", "/rate_limit")
     if not path.startswith(allowed_prefixes):
         raise ValueError("GitHub API path is not allowlisted")
     payload = None if body is None else json.dumps(body).encode("utf-8")
@@ -339,6 +339,19 @@ def github_org_json(project: ProjectName, suffix: str, query: dict[str, Any] | N
         raise ValueError("Invalid organization API path")
     owner = github_repo(project).split("/", 1)[0]
     path = f"/orgs/{owner}{suffix}"
+    if query:
+        filtered = {key: value for key, value in query.items() if value not in (None, "")}
+        if filtered: path += "?" + urllib.parse.urlencode(filtered)
+    token, _ = github_installation_token()
+    _, raw, _ = _github_http(path, token=token)
+    return json.loads(raw.decode("utf-8")) if raw else {}
+
+
+def github_user_json(project: ProjectName, suffix: str, query: dict[str, Any] | None = None) -> Any:
+    if (suffix and not suffix.startswith("/")) or ".." in suffix or "\x00" in suffix:
+        raise ValueError("Invalid user API path")
+    owner = github_repo(project).split("/", 1)[0]
+    path = f"/users/{owner}{suffix}"
     if query:
         filtered = {key: value for key, value in query.items() if value not in (None, "")}
         if filtered: path += "?" + urllib.parse.urlencode(filtered)
