@@ -548,6 +548,26 @@ def run_git(
         os.chmod(askpass_path, 0o700)
         environment["GIT_ASKPASS"] = str(askpass_path)
         environment["MOORY_GITHUB_TOKEN_PATH"] = str(token_path)
+    elif auth_config.get("GITHUB_AUTH_MODE") == "github_app":
+        try:
+            token, _ = github_installation_token()
+        except (ValueError, RuntimeError, OSError) as error:
+            return {"ok": False, "exit_code": -1, "output": "", "error": redact_github_text(str(error))[:500]}
+        descriptor, token_name = tempfile.mkstemp(prefix=".git-app-token-", dir=ROOT / "logs")
+        os.close(descriptor)
+        temporary_token_path = Path(token_name)
+        temporary_token_path.write_text(token, encoding="utf-8")
+        os.chmod(temporary_token_path, 0o600)
+        descriptor, askpass_name = tempfile.mkstemp(prefix=".git-askpass-", dir=ROOT / "logs")
+        os.close(descriptor)
+        askpass_path = Path(askpass_name)
+        askpass_path.write_text(
+            "#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' x-access-token;;\n  *) cat \"$MOORY_GITHUB_TOKEN_PATH\";;\nesac\n",
+            encoding="utf-8",
+        )
+        os.chmod(askpass_path, 0o700)
+        environment["GIT_ASKPASS"] = str(askpass_path)
+        environment["MOORY_GITHUB_TOKEN_PATH"] = str(temporary_token_path)
 
     try:
         result = subprocess.run(
