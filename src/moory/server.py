@@ -84,6 +84,14 @@ SECRET_PATTERN = (
     r"|(?:MOORY_TOKEN|GITHUB_TOKEN)\s*=\s*[A-Za-z0-9_./+=:-]{20,}"
     r"|github_" r"pat_[A-Za-z0-9_]{20,}"
     r"|ghp_" r"[A-Za-z0-9]{20,}"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|AIza[0-9A-Za-z_-]{35}"
+    r"|xox[baprs]-[A-Za-z0-9-]{20,}"
+    r"|sk_(?:live|test)_[A-Za-z0-9]{20,}"
+    r"|glpat-[A-Za-z0-9_-]{20,}"
+    r"|pypi-[A-Za-z0-9_-]{40,}"
+    r"|npm_[A-Za-z0-9]{36}"
+    r"|(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?):\/\/[^\s:/]+:[^\s@/]+@"
 )
 
 GIT_SECRET_PATTERN = (
@@ -91,6 +99,13 @@ GIT_SECRET_PATTERN = (
     r"|(MOORY_TOKEN|GITHUB_TOKEN)[[:space:]]*=[[:space:]]*[A-Za-z0-9_./+=:-]{20,}"
     r"|github_pat_[A-Za-z0-9_]{20,}"
     r"|ghp_[A-Za-z0-9]{20,}"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|AIza[0-9A-Za-z_-]{35}"
+    r"|xox[baprs]-[A-Za-z0-9-]{20,}"
+    r"|sk_(live|test)_[A-Za-z0-9]{20,}"
+    r"|glpat-[A-Za-z0-9_-]{20,}"
+    r"|pypi-[A-Za-z0-9_-]{40,}"
+    r"|npm_[A-Za-z0-9]{36}"
 )
 
 mcp = MCPServer(
