@@ -2299,6 +2299,10 @@ def github_update_release(
         payload: dict[str, Any] = {}
         if name is not None: payload["name"] = validate_title(name, "release name")
         if body is not None: payload["body"] = validate_body(body, 100_000)
+        if target_commitish is not None:
+            if not current.get("draft"):
+                return {"ok": False, "error": "Only draft releases can be retargeted"}
+            payload["target_commitish"] = validate_ref(target_commitish, "target_commitish")
         if prerelease is not None: payload["prerelease"] = bool(prerelease)
         if publish is not None:
             if publish and current.get("draft") and confirmation.strip() != f"PUBLISH RELEASE {release}":
