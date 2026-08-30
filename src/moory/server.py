@@ -3447,6 +3447,36 @@ def github_comment_discussion(project: ProjectName, discussion_id: str, body: st
         audit("github_comment_discussion", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_get_pull_request_queue_state(project: ProjectName, pull_number: int) -> dict:
+    """Read a pull request's merge queue state."""
+    try:
+        owner, repo = github_repo(project).split("/", 1); number = require_positive_id(pull_number, "pull number")
+        query = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id number url mergeQueueEntry{id position state estimatedTimeToMerge}}}}"
+        data = github_graphql(project, query, {"owner": owner, "repo": repo, "number": number}); item = (data.get("repository") or {}).get("pullRequest")
+        if not item: return {"ok": False, "error": "Pull request not found"}
+        return {"ok": True, "pull_request": item, "queued": item.get("mergeQueueEntry") is not None}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_set_pull_request_queue_state(project: ProjectName, pull_number: int, action: Literal["enqueue", "dequeue"], confirmation: str = "") -> dict:
+    """Add or remove a pull request from the merge queue after exact confirmation."""
+    try:
+        owner, repo = github_repo(project).split("/", 1); number = require_positive_id(pull_number, "pull number")
+        query = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id mergeQueueEntry{id}}}}"; pull = github_graphql(project, query, {"owner": owner, "repo": repo, "number": number})["repository"]["pullRequest"]
+        if not pull: return {"ok": False, "error": "Pull request not found"}
+        required = f"{action.upper()} PR #{number}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Merge queue change requires confirmation: {required}"}
+        if action == "enqueue": mutation = "mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id position state estimatedTimeToMerge}}}"; variables = {"id": pull["id"]}; key = "enqueuePullRequest"
+        else: mutation = "mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id position state}}}"; variables = {"id": pull["id"]}; key = "dequeuePullRequest"
+        with WRITE_LOCK: data = github_graphql(project, mutation, variables, "github_set_pull_request_queue_state")
+        return {"ok": True, "action": action, "merge_queue_entry": data[key].get("mergeQueueEntry")}
+    except Exception as error:
+        audit("github_set_pull_request_queue_state", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
