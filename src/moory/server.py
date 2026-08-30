@@ -578,7 +578,7 @@ def run_git(
     }
 
 
-def audit(action: str, project: str, ok: bool, detail: str = "") -> None:
+def audit(action: str, project: str, ok: bool, detail: str = "") -> bool:
     record = {
         "time": datetime.now(timezone.utc).isoformat(),
         "action": action,
@@ -589,8 +589,11 @@ def audit(action: str, project: str, ok: bool, detail: str = "") -> None:
     try:
         with AUDIT_LOG.open("a", encoding="utf-8") as file:
             file.write(json.dumps(record, ensure_ascii=False) + "\n")
+            file.flush()
+            os.fsync(file.fileno())
+        return True
     except OSError:
-        pass
+        return False
 
 
 def current_branch(project: ProjectName) -> tuple[bool, str]:
