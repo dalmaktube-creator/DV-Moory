@@ -848,6 +848,7 @@ def worker_context(
             "file_count": len(files),
             "top_extensions": sorted(extensions.items(), key=lambda item: (-item[1], item[0]))[:10],
             "detail": detail,
+            "cache": {"strategy": "commit_sha", "head_sha": head_sha, "hit": cache_hit},
             "available_detail_levels": list(DETAIL_LEVELS),
             "truncated": False,
             "next_recommended_action": "Request evidence before making a code change." if detail == "summary" else "Read exact target ranges before editing.",
