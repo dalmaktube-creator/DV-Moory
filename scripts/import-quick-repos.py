@@ -244,6 +244,7 @@ def main() -> None:
     os.chmod(askpass, 0o700)
     subprocess.run(["chown", "moory:moory", str(askpass)], check=True)
 
+    created_clones: list[Path] = []
     try:
         for repository in selected:
             repo = repository["repo"]
