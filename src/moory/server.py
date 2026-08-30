@@ -1142,6 +1142,8 @@ def sync_project(project: ProjectName) -> dict:
             audit("sync", project, False, reason)
             return {"ok": False, "error": reason}
 
+        if not audit("sync_preflight", project, True, "write preflight"):
+            return {"ok": False, "error": "Audit log unavailable; sync blocked"}
         branch = PROJECTS[project]["branch"]
         fetch = run_git(project, ["fetch", "origin", branch], timeout=90)
         if not fetch["ok"]:
