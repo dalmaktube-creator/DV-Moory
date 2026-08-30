@@ -955,16 +955,16 @@ def worker_context(
     matches: list[dict[str, Any]] = []
     context_radius = 0 if detail == "summary" else 3 if detail == "evidence" else 12
     root = config["path"].resolve()
-    for raw in raw_matches[:safe_limit]:
+    for raw in safe_raw_matches[:safe_limit]:
         match = re.match(r"^(.+):(\d+):(.*)$", raw)
         if not match:
             continue
         path, line_text, preview = match.groups()
         line_number = int(line_text)
         item: dict[str, Any] = {"path": path, "line": line_number, "preview": preview[:500]}
-        if context_radius and not is_sensitive_path(path):
-            candidate = (root / path).resolve()
-            if root in candidate.parents and candidate.is_file() and candidate.stat().st_size <= 1_000_000:
+        if context_radius:
+            candidate = safe_search_candidate(project, path)
+            if candidate is not None:
                 content = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
                 start = max(1, line_number - context_radius)
                 end = min(len(content), line_number + context_radius)
