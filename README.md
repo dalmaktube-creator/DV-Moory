@@ -9,6 +9,11 @@ Moory keeps reasoning with the connected agent and moves deterministic repositor
 - `worker_context` provides a compact repository overview or fixed-text code search.
 - `detail=summary` minimizes routine output, `detail=evidence` includes nearby source context, and `detail=full` is an explicit escape hatch.
 - Results are bounded and report truncation instead of silently hiding additional matches.
+- `moory_capabilities` teaches connected agents when to escalate context and why summary alone is not edit evidence.
+- Repository file maps are cached by the exact commit SHA while worktree status remains live.
+- `worker_benchmark` reports measured JSON bytes and calls without claiming exact token savings.
+- `inspect_ci_failure` combines failed jobs with bounded redacted log evidence.
+- `github_permission_diagnostics` probes safe read capabilities without mutating repositories.
 
 The original granular read tools remain available, so agents can always inspect exact files and line ranges when compact context is insufficient.
 

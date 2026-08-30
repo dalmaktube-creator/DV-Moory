@@ -5,6 +5,12 @@
 - Added authenticated private Git fetch and push support for Quick Mode without storing tokens in remote URLs.
 - Preserved available pull request data when optional Checks or status permissions are unavailable.
 - Added the bounded `worker_context` tool with `summary`, `evidence`, and `full` escape-hatch levels.
+- Added agent-facing capability discovery and explicit context-escalation instructions.
+- Added anti-blindness metadata and commit-SHA repository-map caching.
+- Added measurable worker benchmarking and safe GitHub permission diagnostics.
+- Added a composite CI failure inspector with bounded redacted logs.
+- Added patch input normalization and actionable preflight diagnostics.
+- Made failed commit staging transactional and recoverable.
 
 ## 1.0.0
 
