@@ -2587,6 +2587,69 @@ def github_upsert_actions_variable(project: ProjectName, name: str, value: str, 
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_get_pages(project: ProjectName, limit: int = 20, page: int = 1) -> dict:
+    """Read GitHub Pages configuration and recent builds."""
+    try:
+        site = github_json(project, "/pages")
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/pages/builds", query={"per_page": safe_limit, "page": safe_page})
+        builds = [
+            {"id": item.get("id"), "status": item.get("status"), "error": item.get("error"), "commit": item.get("commit"), "duration": item.get("duration"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at")}
+            for item in items[:safe_limit]
+        ]
+        return {"ok": True, "configured": True, "site": {"url": site.get("html_url"), "status": site.get("status"), "cname": site.get("cname"), "https_enforced": site.get("https_enforced"), "build_type": site.get("build_type"), "source": site.get("source")}, "builds": builds, "page": safe_page, "truncated": len(items) == safe_limit, "next_page": safe_page + 1 if len(items) == safe_limit else None}
+    except Exception as error:
+        if "HTTP 404" in str(error):
+            return {"ok": True, "configured": False, "site": None, "builds": []}
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_configure_pages(project: ProjectName, operation: Literal["create", "update"], build_type: Literal["legacy", "workflow"], branch: str = "", source_path: Literal["/", "/docs"] = "/", https_enforced: bool | None = None, confirmation: str = "") -> dict:
+    """Create or update GitHub Pages after exact confirmation."""
+    try:
+        if operation not in {"create", "update"} or build_type not in {"legacy", "workflow"}:
+            return {"ok": False, "error": "Invalid Pages operation or build type"}
+        clean_branch = validate_ref(branch, "Pages branch") if branch else ""
+        if source_path not in {"/", "/docs"}:
+            return {"ok": False, "error": "Pages source path must be / or /docs"}
+        payload: dict[str, Any] = {"build_type": build_type}
+        if build_type == "legacy":
+            if not clean_branch:
+                return {"ok": False, "error": "Legacy Pages requires a source branch"}
+            payload["source"] = {"branch": clean_branch, "path": source_path}
+        elif clean_branch:
+            payload["source"] = {"branch": clean_branch, "path": source_path}
+        if https_enforced is not None:
+            payload["https_enforced"] = bool(https_enforced)
+        required = f"CONFIGURE PAGES {operation} {build_type}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Pages configuration requires confirmation: {required}"}
+        method: Literal["POST", "PATCH", "PUT"] = "POST" if operation == "create" else "PUT"
+        with WRITE_LOCK:
+            result = github_write_json(project, "/pages", method=method, body=payload, audit_action="github_configure_pages")
+        site = github_json(project, "/pages")
+        return {"ok": True, "status": result["status"], "operation": operation, "site": {"url": site.get("html_url"), "status": site.get("status"), "https_enforced": site.get("https_enforced"), "build_type": site.get("build_type"), "source": site.get("source")}}
+    except Exception as error:
+        audit("github_configure_pages", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_request_pages_build(project: ProjectName, confirmation: str = "") -> dict:
+    """Request a Pages build after exact confirmation BUILD PAGES."""
+    try:
+        if confirmation.strip() != "BUILD PAGES":
+            return {"ok": False, "error": "Pages build requires confirmation: BUILD PAGES"}
+        with WRITE_LOCK:
+            result = github_write_json(project, "/pages/builds", method="POST", body={}, audit_action="github_request_pages_build")
+        return {"ok": True, "status": result["status"], "build": {"url": result["data"].get("url"), "status": result["data"].get("status")}}
+    except Exception as error:
+        audit("github_request_pages_build", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
