@@ -334,6 +334,39 @@ def github_write_json(
     return {"status": status, "data": result}
 
 
+def github_org_json(project: ProjectName, suffix: str, query: dict[str, Any] | None = None) -> Any:
+    if (suffix and not suffix.startswith("/")) or ".." in suffix or "\x00" in suffix:
+        raise ValueError("Invalid organization API path")
+    owner = github_repo(project).split("/", 1)[0]
+    path = f"/orgs/{owner}{suffix}"
+    if query:
+        filtered = {key: value for key, value in query.items() if value not in (None, "")}
+        if filtered: path += "?" + urllib.parse.urlencode(filtered)
+    token, _ = github_installation_token()
+    _, raw, _ = _github_http(path, token=token)
+    return json.loads(raw.decode("utf-8")) if raw else {}
+
+
+def github_org_write_json(project: ProjectName, suffix: str, *, body: dict[str, Any], audit_action: str) -> dict[str, Any]:
+    if (suffix and not suffix.startswith("/")) or ".." in suffix or "\x00" in suffix:
+        raise ValueError("Invalid organization API path")
+    owner = github_repo(project).split("/", 1)[0]
+    if not audit(f"{audit_action}_preflight", project, True, "write preflight"):
+        raise RuntimeError("Audit log unavailable; GitHub write blocked")
+    token, _ = github_installation_token()
+    status, raw, _ = _github_http(f"/orgs/{owner}{suffix}", method="POST", token=token, body=body)
+    result = json.loads(raw.decode("utf-8")) if raw else {}
+    audit(audit_action, project, 200 <= status < 300, f"HTTP {status}")
+    return {"status": status, "data": result}
+
+
+def validate_digest(value: str) -> str:
+    clean = value.strip().lower()
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", clean):
+        raise ValueError("digest must use sha256: followed by 64 hexadecimal characters")
+    return clean
+
+
 def validate_title(value: str, label: str = "title") -> str:
     clean = value.strip()
     if not clean or len(clean) > 256 or "\x00" in clean:
