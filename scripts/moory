@@ -89,17 +89,11 @@ PY
 
 add_project() {
   need_root; ensure_layout
-  local mode
-  mode=$(awk -F= '$1=="GITHUB_AUTH_MODE" {print $2}' "$CONFIG_DIR/github-auth.env" 2>/dev/null || true)
-  if [[ $mode == fine_grained_pat ]]; then
-    [[ -x /usr/local/lib/moory/import-quick-repos.py ]] || {
-      error "Quick repository importer is missing. Run Update Moory first."
-      return
-    }
-    /usr/local/lib/moory/import-quick-repos.py
-  else
-    add_project_hardened
-  fi
+  [[ -x /usr/local/lib/moory/import-quick-repos.py ]] || {
+    error "Repository importer is missing. Run Update Moory first."
+    return
+  }
+  /usr/local/lib/moory/import-quick-repos.py
 }
 
 add_project_hardened() {
