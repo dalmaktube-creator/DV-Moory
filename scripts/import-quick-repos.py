@@ -103,6 +103,46 @@ def github_post_json(token: str, path: str, body: dict[str, Any]) -> Any:
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         fail("Could not write repository settings through GitHub")
 
+def github_app_installation_token(auth: dict[str, str], config_dir: Path) -> tuple[str, dict[str, Any]]:
+    app_id = auth.get("GITHUB_APP_ID", "")
+    installation_id = auth.get("GITHUB_INSTALLATION_ID", "")
+    key_path = Path(auth.get("GITHUB_PRIVATE_KEY_PATH", ""))
+    expected_key = config_dir / "github-app.pem"
+    if not app_id.isdigit() or not installation_id.isdigit():
+        fail("GitHub App identifiers are invalid")
+    if key_path.resolve() != expected_key.resolve() or not key_path.is_file():
+        fail("GitHub App private key path is invalid")
+    now = int(time.time())
+    app_jwt = jwt.encode(
+        {"iat": now - 60, "exp": now + 540, "iss": app_id},
+        key_path.read_text(encoding="utf-8"),
+        algorithm="RS256",
+    )
+    request = urllib.request.Request(
+        f"{API_BASE}/app/installations/{installation_id}/access_tokens",
+        data=b"{}",
+        method="POST",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {app_jwt}",
+            "Content-Type": "application/json",
+            "User-Agent": "Moory-Repository-Importer/1.0",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        fail(f"GitHub App authentication failed with HTTP {error.code}; verify the Installation ID")
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        fail("Could not authenticate the GitHub App")
+    token = str(payload.get("token", ""))
+    if not token:
+        fail("GitHub App returned an invalid installation token")
+    return token, payload
+
+
 def list_accessible_repositories(token: str) -> list[dict[str, Any]]:
     repositories: list[dict[str, Any]] = []
     for page in range(1, 11):
