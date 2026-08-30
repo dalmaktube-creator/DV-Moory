@@ -944,6 +944,14 @@ def worker_context(
     if not grep["ok"]:
         return grep
     raw_matches = grep["output"].splitlines()
+    safe_raw_matches: list[str] = []
+    filtered_sensitive_matches = 0
+    for raw in raw_matches:
+        parsed = re.match(r"^(.+):(\d+):(.*)$", raw)
+        if not parsed or safe_search_candidate(project, parsed.group(1)) is None:
+            filtered_sensitive_matches += 1
+            continue
+        safe_raw_matches.append(raw)
     matches: list[dict[str, Any]] = []
     context_radius = 0 if detail == "summary" else 3 if detail == "evidence" else 12
     root = config["path"].resolve()
