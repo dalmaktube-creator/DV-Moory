@@ -258,6 +258,7 @@ def main() -> None:
             info(f"Cloning {repo} as '{alias}'...")
             clone_url = "https://" + "github.com/" + repo + ".git"
             git_as_moory(root, askpass, token_path, "clone", clone_url, str(clone))
+            created_clones.append(clone)
             remote_branch = subprocess.run(
                 ["runuser", "-u", "moory", "--", "git", "-C", str(clone), "show-ref", "--verify", f"refs/remotes/origin/{branch}"],
                 stdout=subprocess.DEVNULL,
