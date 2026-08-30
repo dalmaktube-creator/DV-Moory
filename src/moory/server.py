@@ -994,6 +994,55 @@ def validate_changes(project: ProjectName, staged: bool = False) -> dict:
 
 
 @mcp.tool()
+def validate_project(project: ProjectName) -> dict:
+    """Run bounded static validation without executing repository code."""
+    config = PROJECTS.get(project)
+    if config is None:
+        return {"ok": False, "error": "Unknown project"}
+    whitespace = validate_changes(project, staged=False)
+    listed = run_git(project, ["ls-files"], output_limit=2_000_000)
+    if not listed.get("ok"):
+        return listed
+    root = config["path"].resolve()
+    findings: list[dict[str, Any]] = []
+    checked = {"python": 0, "json": 0, "toml": 0}
+    skipped_large = 0
+    for relative in listed.get("output", "").splitlines()[:2000]:
+        suffix = Path(relative).suffix.lower()
+        if suffix not in {".py", ".json", ".toml"} or is_sensitive_path(relative):
+            continue
+        candidate = (root / relative).resolve()
+        if root not in candidate.parents or not candidate.is_file():
+            continue
+        if candidate.stat().st_size > 1_000_000:
+            skipped_large += 1
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8")
+            if suffix == ".py":
+                ast.parse(text, filename=relative)
+                checked["python"] += 1
+            elif suffix == ".json":
+                json.loads(text)
+                checked["json"] += 1
+            else:
+                tomllib.loads(text)
+                checked["toml"] += 1
+        except (OSError, UnicodeError, SyntaxError, ValueError) as error:
+            findings.append({"path": relative, "line": getattr(error, "lineno", None), "error": str(error)[:500]})
+            if len(findings) >= 50:
+                break
+    return {
+        "ok": bool(whitespace.get("ok")) and not findings,
+        "checks": {"whitespace": bool(whitespace.get("ok")), "syntax": checked},
+        "findings": findings,
+        "skipped_large_files": skipped_large,
+        "truncated": len(findings) >= 50,
+        "execution_policy": "Repository code was parsed but not executed.",
+    }
+
+
+@mcp.tool()
 def sync_project(project: ProjectName) -> dict:
     """Fetch and fast-forward only the approved branch. Modifies the local clone."""
     with WRITE_LOCK:
