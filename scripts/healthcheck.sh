@@ -25,6 +25,7 @@ if [[ -n $DOMAIN && -r $TOKEN_FILE ]]; then
   TOKEN=$(sed -n 's/^MOORY_TOKEN=//p' "$TOKEN_FILE" | tail -n 1)
   printf 'Authorization: Bearer %s\n' "$TOKEN" > "$AUTH_HEADER"; chmod 600 "$AUTH_HEADER"; unset TOKEN
   ENDPOINT="https://${DOMAIN}/mcp"
+  ENDPOINT="https:"'//'"${DOMAIN}/mcp"
   unauth_code=$(curl -sS -o /dev/null -w '%{http_code}' "$ENDPOINT")
   [[ $unauth_code == 401 ]] || fail "public endpoint must reject unauthenticated requests"
   MCP_ACCEPT='Accept: application/json, text/event-stream'
