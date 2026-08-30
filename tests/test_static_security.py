@@ -97,4 +97,11 @@ assert 'tools/list' in health
 assert 'github_health' in health
 assert 'authentication' in health
 assert 'projects registry validation' in health
+assert '"$ROOT/venv/bin/python" /usr/local/lib/moory/import-quick-repos.py' in menu
+assert 'if [[ -n ${MOORY_DOMAIN:-} ]]' in setup
+assert 'github_app_installation_token' in importer
+assert '/installation/repositories' in importer
+assert 'ALL to register every available repository' in importer
+assert 'moory-app-token-' in importer
+assert 'temporary_token_path.unlink' in importer
 assert 'pull ' not in fetch
