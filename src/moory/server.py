@@ -1535,13 +1535,15 @@ def github_list_pull_requests(
     project: ProjectName,
     state: Literal["open", "closed", "all"] = "open",
     limit: int = 20,
+    page: int = 1,
 ) -> dict:
     """List repository pull requests."""
     try:
         safe_limit = max(1, min(limit, 100))
-        items = github_json(project, "/pulls", query={"state": state, "per_page": safe_limit, "sort": "updated", "direction": "desc"})
+        safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/pulls", query={"state": state, "per_page": safe_limit, "page": safe_page, "sort": "updated", "direction": "desc"})
         pulls = [compact_pull(item) for item in items[:safe_limit]]
-        return {"ok": True, "count": len(pulls), "pull_requests": pulls}
+        return {"ok": True, "count": len(pulls), "page": safe_page, "truncated": len(items) == safe_limit, "next_page": safe_page + 1 if len(items) == safe_limit else None, "pull_requests": pulls}
     except Exception as error:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
