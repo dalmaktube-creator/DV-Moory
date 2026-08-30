@@ -1362,7 +1362,7 @@ def commit_changes(project: ProjectName, message: str) -> dict:
             run_git(project, ["restore", "--staged", "--", *paths])
             return secret_scan
 
-        committed = run_git(project, ["commit", "-m", clean_message])
+        committed = run_git(project, ["-c", "user.name=Moory Worker", "-c", "user.email=moory@localhost", "commit", "-m", clean_message])
         if not committed["ok"]:
             run_git(project, ["restore", "--staged", "--", *paths])
         audit("commit", project, committed["ok"], clean_message)
