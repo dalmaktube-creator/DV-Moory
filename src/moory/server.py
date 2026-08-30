@@ -3206,10 +3206,11 @@ def github_list_attestations(project: ProjectName, subject_digest: str, predicat
 
 @mcp.tool()
 def github_list_packages(project: ProjectName, package_type: Literal["npm", "maven", "rubygems", "docker", "nuget", "container"] = "container", visibility: Literal["public", "private", "internal", "all"] = "all", limit: int = 50, page: int = 1) -> dict:
-    """List packages owned by the registered repository organization."""
+    """List packages owned by the registered repository owner."""
     try:
         safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
-        items = github_org_json(project, "/packages", {"package_type": package_type, "visibility": "" if visibility == "all" else visibility, "per_page": safe_limit, "page": safe_page})
+        owner_type = (github_json(project, "").get("owner") or {}).get("type"); account_json = github_org_json if owner_type == "Organization" else github_user_json
+        items = account_json(project, "/packages", {"package_type": package_type, "visibility": "" if visibility == "all" else visibility, "per_page": safe_limit, "page": safe_page})
         packages = [{"id": item.get("id"), "name": item.get("name"), "package_type": item.get("package_type"), "visibility": item.get("visibility"), "version_count": item.get("version_count"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "html_url": item.get("html_url")} for item in items[:safe_limit]]
         return {"ok": True, "count": len(packages), "page": safe_page, "truncated": len(packages) == safe_limit, "packages": packages}
     except Exception as error:
@@ -3218,10 +3219,11 @@ def github_list_packages(project: ProjectName, package_type: Literal["npm", "mav
 
 @mcp.tool()
 def github_list_package_versions(project: ProjectName, package_type: Literal["npm", "maven", "rubygems", "docker", "nuget", "container"], package_name: str, state: Literal["active", "deleted"] = "active", limit: int = 50, page: int = 1) -> dict:
-    """List versions for an organization package."""
+    """List versions for a package owned by the repository owner."""
     try:
         name = quote_path_value(validate_title(package_name, "package name")); safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
-        items = github_org_json(project, f"/packages/{package_type}/{name}/versions", {"state": state, "per_page": safe_limit, "page": safe_page})
+        owner_type = (github_json(project, "").get("owner") or {}).get("type"); account_json = github_org_json if owner_type == "Organization" else github_user_json
+        items = account_json(project, f"/packages/{package_type}/{name}/versions", {"state": state, "per_page": safe_limit, "page": safe_page})
         versions = [{"id": item.get("id"), "name": item.get("name"), "url": item.get("url"), "package_html_url": item.get("package_html_url"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "metadata": item.get("metadata")} for item in items[:safe_limit]]
         return {"ok": True, "count": len(versions), "page": safe_page, "truncated": len(versions) == safe_limit, "versions": versions}
     except Exception as error:
