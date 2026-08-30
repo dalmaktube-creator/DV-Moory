@@ -592,6 +592,8 @@ def run_git(
     finally:
         if askpass_path is not None:
             askpass_path.unlink(missing_ok=True)
+        if temporary_token_path is not None:
+            temporary_token_path.unlink(missing_ok=True)
 
     return {
         "ok": result.returncode == 0,
