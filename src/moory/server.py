@@ -1637,6 +1637,21 @@ def release_readiness(project: ProjectName, tag_name: str = "") -> dict:
     if tag:
         tags = run_git(project, ["tag", "--list", tag])
         tag_exists = bool(tags.get("output", "").strip())
+        remote_tags = run_git(project, ["ls-remote", "--tags", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"], timeout=90)
+        tag_exists = tag_exists or bool(remote_tags.get("output", "").strip())
+    release_exists = False
+    if tag:
+        try:
+            releases = github_json(project, "/releases", query={"per_page": 100})
+            release_exists = any(str(item.get("tag_name", "")) == tag for item in releases)
+        except Exception:
+            partial = True
+    changelog_mentions_tag = True
+    if tag and changelog.get("ok"):
+        try:
+            changelog_mentions_tag = tag.lstrip("v") in (config["path"] / "CHANGELOG.md").read_text(encoding="utf-8")
+        except OSError:
+            changelog_mentions_tag = False
     checks = {
         "allowed_branch": bool(branch_ok),
         "clean_worktree": bool(status.get("ok") and not status.get("output", "").strip()),
