@@ -2530,6 +2530,63 @@ def github_upsert_environment(project: ProjectName, environment: str, wait_timer
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_actions_variables(project: ProjectName, scope: Literal["repository", "environment"] = "repository", environment: str = "", limit: int = 30, page: int = 1) -> dict:
+    """List repository or environment Actions variables without returning values."""
+    try:
+        if scope not in {"repository", "environment"}:
+            return {"ok": False, "error": "Invalid variable scope"}
+        clean_environment = validate_environment_name(environment) if scope == "environment" else ""
+        safe_limit = max(1, min(limit, 30)); safe_page = max(1, min(page, 1000))
+        suffix = "/actions/variables"
+        if scope == "environment":
+            suffix = "/environments/" + quote_path_value(clean_environment) + "/variables"
+        data = github_json(project, suffix, query={"per_page": safe_limit, "page": safe_page})
+        variables = [
+            {"name": item.get("name"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at")}
+            for item in data.get("variables", [])[:safe_limit]
+        ]
+        return {"ok": True, "scope": scope, "environment": clean_environment or None, "total_count": data.get("total_count"), "count": len(variables), "page": safe_page, "truncated": len(variables) == safe_limit, "next_page": safe_page + 1 if len(variables) == safe_limit else None, "values_redacted": True, "variables": variables}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_upsert_actions_variable(project: ProjectName, name: str, value: str, scope: Literal["repository", "environment"] = "repository", environment: str = "", confirmation: str = "") -> dict:
+    """Create or update a non-secret Actions variable after exact confirmation."""
+    try:
+        if scope not in {"repository", "environment"}:
+            return {"ok": False, "error": "Invalid variable scope"}
+        clean_name = validate_variable_name(name)
+        clean_value = validate_body(value, 10_000)
+        clean_environment = validate_environment_name(environment) if scope == "environment" else ""
+        suffix = "/actions/variables"
+        if scope == "environment":
+            suffix = "/environments/" + quote_path_value(clean_environment) + "/variables"
+        item_suffix = suffix + "/" + quote_path_value(clean_name)
+        exists = False
+        try:
+            github_json(project, item_suffix)
+            exists = True
+        except Exception as lookup_error:
+            if "HTTP 404" not in str(lookup_error):
+                raise
+        action = "UPDATE" if exists else "CREATE"
+        target = "repository" if scope == "repository" else f"environment {clean_environment}"
+        required = f"{action} VARIABLE {clean_name} IN {target}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Variable write requires confirmation: {required}"}
+        method: Literal["POST", "PATCH", "PUT"] = "PATCH" if exists else "POST"
+        path = item_suffix if exists else suffix
+        body = {"name": clean_name, "value": clean_value}
+        with WRITE_LOCK:
+            result = github_write_json(project, path, method=method, body=body, audit_action="github_upsert_actions_variable")
+        return {"ok": True, "status": result["status"], "action": action.lower(), "scope": scope, "environment": clean_environment or None, "name": clean_name, "value_redacted": True}
+    except Exception as error:
+        audit("github_upsert_actions_variable", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
