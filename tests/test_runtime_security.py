@@ -86,3 +86,26 @@ with tempfile.TemporaryDirectory() as temporary:
     assert loaded["ok"] and loaded["release"]["draft"]
     updated = module.github_update_release("demo", 1, target_commitish="new-head")
     assert updated["ok"] and captured["body"]["target_commitish"] == "new-head"
+
+    blocked_deployment = module.github_create_deployment("demo", "main", confirmation="")
+    assert not blocked_deployment["ok"] and "DEPLOY main TO production" in blocked_deployment["error"]
+
+    captured.clear()
+
+    def fake_variable_json(project, path, query=None):
+        if path == "/actions/variables/TEST_VAR":
+            raise RuntimeError("GitHub API HTTP 404: Not Found")
+        raise AssertionError(path)
+
+    def fake_variable_write(project, path, method, body, audit_action):
+        captured.update({"path": path, "method": method, "body": body, "audit_action": audit_action})
+        return {"status": 201, "data": {}}
+
+    module.github_json = fake_variable_json
+    module.github_write_json = fake_variable_write
+    variable = module.github_upsert_actions_variable(
+        "demo", "test_var", "public-value", confirmation="CREATE VARIABLE TEST_VAR IN repository"
+    )
+    assert variable["ok"] and variable["value_redacted"]
+    assert captured["path"] == "/actions/variables" and captured["method"] == "POST"
+    assert "public-value" not in json.dumps(variable)
