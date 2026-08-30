@@ -831,6 +831,9 @@ def worker_context(
             "file_count": len(files),
             "top_extensions": sorted(extensions.items(), key=lambda item: (-item[1], item[0]))[:10],
             "detail": detail,
+            "available_detail_levels": list(DETAIL_LEVELS),
+            "truncated": False,
+            "next_recommended_action": "Request evidence before making a code change." if detail == "summary" else "Read exact target ranges before editing.",
         }
         if detail in {"evidence", "full"}:
             result["top_level"] = sorted({path.split("/", 1)[0] for path in files})[:100]
