@@ -3201,6 +3201,35 @@ def github_list_package_versions(project: ProjectName, package_type: Literal["np
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_create_attestation(project: ProjectName, bundle: dict[str, Any], confirmation: str = "") -> dict:
+    """Store a Sigstore attestation bundle after exact confirmation."""
+    try:
+        encoded = json.dumps(bundle, separators=(",", ":"))
+        if len(encoded) > 2_000_000 or not isinstance(bundle.get("mediaType"), str) or not isinstance(bundle.get("verificationMaterial"), dict) or not isinstance(bundle.get("dsseEnvelope"), dict):
+            return {"ok": False, "error": "Invalid or oversized Sigstore bundle"}
+        if redact_github_text(encoded) != encoded: return {"ok": False, "error": "Sensitive attestation bundle blocked"}
+        if confirmation.strip() != "CREATE ATTESTATION": return {"ok": False, "error": "Attestation creation requires confirmation: CREATE ATTESTATION"}
+        with WRITE_LOCK: result = github_write_json(project, "/attestations", method="POST", body={"bundle": bundle}, audit_action="github_create_attestation")
+        return {"ok": True, "status": result["status"], "attestation": result["data"]}
+    except Exception as error:
+        audit("github_create_attestation", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_submit_dependency_snapshot(project: ProjectName, snapshot: dict[str, Any], confirmation: str = "") -> dict:
+    """Submit a dependency graph snapshot after exact confirmation."""
+    try:
+        encoded = json.dumps(snapshot, separators=(",", ":")); required = {"version", "job", "sha", "ref", "detector", "manifests"}
+        if len(encoded) > 5_000_000 or not required.issubset(snapshot) or redact_github_text(encoded) != encoded:
+            return {"ok": False, "error": "Invalid, sensitive, or oversized dependency snapshot"}
+        if confirmation.strip() != "SUBMIT DEPENDENCY SNAPSHOT": return {"ok": False, "error": "Dependency submission requires confirmation: SUBMIT DEPENDENCY SNAPSHOT"}
+        with WRITE_LOCK: result = github_write_json(project, "/dependency-graph/snapshots", method="POST", body=snapshot, audit_action="github_submit_dependency_snapshot")
+        return {"ok": True, "status": result["status"], "snapshot": result["data"]}
+    except Exception as error:
+        audit("github_submit_dependency_snapshot", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
