@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-08-30
 
 - Added authenticated private Git fetch and push support for Quick Mode without storing tokens in remote URLs.
 - Preserved available pull request data when optional Checks or status permissions are unavailable.
@@ -18,6 +18,9 @@
 - Added non-executing static validation for Python, JSON, and TOML files.
 - Made static validation the default transactional change-set profile.
 - Added task-oriented tool discovery profiles without claiming dynamic tool hiding.
+- Benchmarked actual serialized baseline and Worker tool payloads with deterministic byte counts.
+- Moved the public Quick Setup command to the top of the README.
+- Added explicit Ubuntu 24.04 and Python 3.12 installer compatibility gates.
 
 ## 1.0.0
 

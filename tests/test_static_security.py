@@ -4,7 +4,7 @@ root = Path(__file__).resolve().parents[1]
 source = (root / "src/moory/server.py").read_text(encoding="utf-8")
 
 required = [
-    'version="1.0.0"',
+    'version="1.1.0"',
     "WRITE_LOCK",
     "TOKEN_LOCK",
     "Repository is not allowlisted",
@@ -50,6 +50,8 @@ for forbidden in [
 print("Static security checks passed")
 
 bootstrap = (root / "install.sh").read_text(encoding="utf-8")
+installer = (root / "scripts/install.sh").read_text(encoding="utf-8")
+readme = (root / "README.md").read_text(encoding="utf-8")
 menu = (root / "scripts/moory").read_text(encoding="utf-8")
 update = (root / "scripts/update.sh").read_text(encoding="utf-8")
 uninstall = (root / "scripts/uninstall.sh").read_text(encoding="utf-8")
@@ -58,6 +60,10 @@ caddy = (root / "scripts/configure-caddy.sh").read_text(encoding="utf-8")
 fetch = (root / "scripts/fetch.sh").read_text(encoding="utf-8")
 assert "MOORY_SOURCE_DIR" not in bootstrap
 assert "rm -rf /opt/moory" in bootstrap
+assert "Moory currently supports Ubuntu 24.04 only." in bootstrap
+assert "Moory currently supports Ubuntu 24.04 only." in installer
+assert "Moory requires Python 3.12 or newer" in installer
+assert "https://raw.githubusercontent.com/dalmaktube-creator/DV-Moory/main/install.sh" in readme
 assert "Project name is already registered" in menu
 assert 'source "$INSTALL_CONFIG"' in update
 assert 'sed "s|@MOORY_ROOT@|$ROOT|g"' in update
