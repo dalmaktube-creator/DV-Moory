@@ -437,6 +437,8 @@ def main() -> None:
         raise
     finally:
         askpass.unlink(missing_ok=True)
+        if temporary_token_path is not None:
+            temporary_token_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
