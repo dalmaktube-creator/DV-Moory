@@ -66,7 +66,15 @@ install -o root -g root -m 644 "$SOURCE/systemd/moory-fetch.timer" /etc/systemd/
 "$ROOT/venv/bin/python" -m py_compile "$ROOT/app/server.py"
 systemctl daemon-reload
 systemctl restart moory
-systemctl is-active --quiet moory
+HEALTHY=0
+for attempt in {1..10}; do
+  if /usr/local/lib/moory/healthcheck.sh; then
+    HEALTHY=1
+    break
+  fi
+  sleep 3
+done
+(( HEALTHY == 1 )) || { echo "Updated runtime failed end-to-end health checks" >&2; false; }
 rm -rf "$PREVIOUS_VENV"
 VENV_SWAPPED=0
 rm -rf "$BACKUP"; trap - ERR
