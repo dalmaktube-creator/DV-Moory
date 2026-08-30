@@ -2918,6 +2918,57 @@ def github_update_secret_scanning_alert(project: ProjectName, alert_number: int,
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_code_scanning_alerts(project: ProjectName, state: Literal["open", "dismissed", "fixed", "all"] = "open", severity: Literal["critical", "high", "medium", "low", "warning", "note", "error", "all"] = "all", limit: int = 50, page: int = 1) -> dict:
+    """List code scanning alerts with bounded security metadata."""
+    try:
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        query = {"per_page": safe_limit, "page": safe_page, "state": "" if state == "all" else state, "severity": "" if severity == "all" else severity}
+        items = github_json(project, "/code-scanning/alerts", query=query)
+        alerts = [
+            {"number": item.get("number"), "state": item.get("state"), "dismissed_reason": item.get("dismissed_reason"), "rule": item.get("rule"), "tool": item.get("tool"), "most_recent_instance": item.get("most_recent_instance"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "dismissed_at": item.get("dismissed_at"), "fixed_at": item.get("fixed_at"), "html_url": item.get("html_url")}
+            for item in items[:safe_limit]
+        ]
+        return {"ok": True, "count": len(alerts), "page": safe_page, "truncated": len(alerts) == safe_limit, "next_page": safe_page + 1 if len(alerts) == safe_limit else None, "alerts": alerts}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_code_scanning_alert(project: ProjectName, alert_number: int) -> dict:
+    """Read one code scanning alert."""
+    try:
+        number = require_positive_id(alert_number, "alert_number")
+        item = github_json(project, f"/code-scanning/alerts/{number}")
+        return {"ok": True, "alert": {"number": item.get("number"), "state": item.get("state"), "dismissed_reason": item.get("dismissed_reason"), "dismissed_comment": item.get("dismissed_comment"), "rule": item.get("rule"), "tool": item.get("tool"), "most_recent_instance": item.get("most_recent_instance"), "instances_url": item.get("instances_url"), "created_at": item.get("created_at"), "updated_at": item.get("updated_at"), "dismissed_at": item.get("dismissed_at"), "fixed_at": item.get("fixed_at"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_update_code_scanning_alert(project: ProjectName, alert_number: int, state: Literal["open", "dismissed"], dismissed_reason: Literal["false positive", "won't fix", "used in tests"] | None = None, dismissed_comment: str = "", confirmation: str = "") -> dict:
+    """Dismiss or reopen a code scanning alert after exact confirmation."""
+    try:
+        number = require_positive_id(alert_number, "alert_number")
+        if state == "dismissed" and dismissed_reason is None:
+            return {"ok": False, "error": "Dismissing a code scanning alert requires dismissed_reason"}
+        if state == "open" and (dismissed_reason is not None or dismissed_comment):
+            return {"ok": False, "error": "Reopening a code scanning alert forbids dismissal fields"}
+        required = f"UPDATE CODE ALERT {number} TO {state}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Code alert update requires confirmation: {required}"}
+        payload: dict[str, Any] = {"state": state}
+        if dismissed_reason is not None: payload["dismissed_reason"] = dismissed_reason
+        if dismissed_comment: payload["dismissed_comment"] = validate_body(dismissed_comment, 10_000)
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/code-scanning/alerts/{number}", method="PATCH", body=payload, audit_action="github_update_code_scanning_alert")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "alert": {"number": item.get("number"), "state": item.get("state"), "dismissed_reason": item.get("dismissed_reason"), "dismissed_at": item.get("dismissed_at"), "updated_at": item.get("updated_at"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_update_code_scanning_alert", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
