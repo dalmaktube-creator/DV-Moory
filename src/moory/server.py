@@ -2698,6 +2698,93 @@ def github_set_workflow_state(project: ProjectName, workflow: str, action: Liter
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_commit_checks(project: ProjectName, ref: str, limit: int = 50, page: int = 1) -> dict:
+    """List check runs for a commit SHA or ref."""
+    try:
+        clean_ref = validate_ref(ref, "check ref")
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        data = github_json(project, f"/commits/{clean_ref}/check-runs", query={"per_page": safe_limit, "page": safe_page})
+        runs = [
+            {"id": item.get("id"), "name": item.get("name"), "head_sha": item.get("head_sha"), "status": item.get("status"), "conclusion": item.get("conclusion"), "started_at": item.get("started_at"), "completed_at": item.get("completed_at"), "details_url": item.get("details_url"), "html_url": item.get("html_url")}
+            for item in data.get("check_runs", [])[:safe_limit]
+        ]
+        return {"ok": True, "total_count": data.get("total_count"), "count": len(runs), "page": safe_page, "truncated": len(runs) == safe_limit, "next_page": safe_page + 1 if len(runs) == safe_limit else None, "check_runs": runs}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_check_run(project: ProjectName, check_run_id: int) -> dict:
+    """Read one check run including bounded output."""
+    try:
+        check = require_positive_id(check_run_id, "check_run_id")
+        item = github_json(project, f"/check-runs/{check}")
+        return {"ok": True, "check_run": {"id": item.get("id"), "name": item.get("name"), "head_sha": item.get("head_sha"), "status": item.get("status"), "conclusion": item.get("conclusion"), "started_at": item.get("started_at"), "completed_at": item.get("completed_at"), "details_url": item.get("details_url"), "external_id": item.get("external_id"), "output": item.get("output"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_create_check_run(project: ProjectName, name: str, head_sha: str, status: Literal["queued", "in_progress", "completed"] = "queued", conclusion: Literal["action_required", "cancelled", "failure", "neutral", "success", "skipped", "stale", "timed_out"] | None = None, details_url: str = "", external_id: str = "", title: str = "", summary: str = "", text: str = "", confirmation: str = "") -> dict:
+    """Create a check run after exact confirmation."""
+    try:
+        clean_name = validate_title(name, "check name")
+        clean_sha = head_sha.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40}", clean_sha):
+            return {"ok": False, "error": "head_sha must be a full 40-character commit SHA"}
+        if (status == "completed") != (conclusion is not None):
+            return {"ok": False, "error": "Completed checks require a conclusion; other states forbid it"}
+        required = f"CREATE CHECK {clean_name} ON {clean_sha}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Check creation requires confirmation: {required}"}
+        payload: dict[str, Any] = {"name": clean_name, "head_sha": clean_sha, "status": status}
+        if details_url: payload["details_url"] = validate_external_url(details_url, "details_url")
+        if external_id: payload["external_id"] = validate_title(external_id, "external_id")
+        if conclusion: payload["conclusion"] = conclusion
+        if title or summary or text:
+            if not title or not summary:
+                return {"ok": False, "error": "Check output requires both title and summary"}
+            payload["output"] = {"title": validate_title(title, "output title"), "summary": validate_body(summary, 65_535), "text": validate_body(text, 65_535)}
+        with WRITE_LOCK:
+            result = github_write_json(project, "/check-runs", method="POST", body=payload, audit_action="github_create_check_run")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "check_run": {"id": item.get("id"), "name": item.get("name"), "head_sha": item.get("head_sha"), "status": item.get("status"), "conclusion": item.get("conclusion"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_create_check_run", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_update_check_run(project: ProjectName, check_run_id: int, status: Literal["queued", "in_progress", "completed"], conclusion: Literal["action_required", "cancelled", "failure", "neutral", "success", "skipped", "stale", "timed_out"] | None = None, details_url: str = "", title: str = "", summary: str = "", text: str = "", confirmation: str = "") -> dict:
+    """Update a check run after exact confirmation."""
+    try:
+        check = require_positive_id(check_run_id, "check_run_id")
+        if status not in {"queued", "in_progress", "completed"}:
+            return {"ok": False, "error": "Invalid check status"}
+        if status == "completed" and conclusion is None:
+            return {"ok": False, "error": "Completed checks require a conclusion"}
+        if status != "completed" and conclusion is not None:
+            return {"ok": False, "error": "Only completed checks accept a conclusion"}
+        required = f"UPDATE CHECK {check} TO {status}"
+        if confirmation.strip() != required:
+            return {"ok": False, "error": f"Check update requires confirmation: {required}"}
+        payload: dict[str, Any] = {"status": status}
+        if conclusion: payload["conclusion"] = conclusion
+        if details_url: payload["details_url"] = validate_external_url(details_url, "details_url")
+        if title or summary or text:
+            if not title or not summary:
+                return {"ok": False, "error": "Check output requires both title and summary"}
+            payload["output"] = {"title": validate_title(title, "output title"), "summary": validate_body(summary, 65_535), "text": validate_body(text, 65_535)}
+        with WRITE_LOCK:
+            result = github_write_json(project, f"/check-runs/{check}", method="PATCH", body=payload, audit_action="github_update_check_run")
+        item = result["data"]
+        return {"ok": True, "status": result["status"], "check_run": {"id": item.get("id"), "name": item.get("name"), "head_sha": item.get("head_sha"), "status": item.get("status"), "conclusion": item.get("conclusion"), "html_url": item.get("html_url")}}
+    except Exception as error:
+        audit("github_update_check_run", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
