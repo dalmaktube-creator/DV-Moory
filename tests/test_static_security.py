@@ -42,6 +42,18 @@ required = [
     "github_get_actions_log",
     "github_create_release",
     "Possible secret detected; GitHub write blocked",
+    "github_list_deployments",
+    "github_get_deployment",
+    "github_create_deployment",
+    "github_create_deployment_status",
+    "github_list_environments",
+    "github_get_environment",
+    "github_upsert_environment",
+    "github_list_actions_variables",
+    "github_upsert_actions_variable",
+    "github_get_pages",
+    "github_configure_pages",
+    "github_request_pages_build",
 ]
 for value in required:
     assert value in source, value
