@@ -83,4 +83,10 @@ assert '-C "$ROOT" config/projects.json' in menu
 assert 'Backup contains unexpected files' in restore
 assert 'trap rollback ERR' in caddy
 assert 'fetch --prune origin' in fetch
+assert 'NEXT_VENV=' in update
+assert 'VENV_SWAPPED=1' in update
+assert 'mv "$PREVIOUS_VENV" "$ROOT/venv"' in update
+assert 'tools/list' in health
+assert 'github_health' in health
+assert 'projects registry validation' in health
 assert 'pull ' not in fetch
