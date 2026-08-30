@@ -279,6 +279,16 @@ def main() -> None:
         subprocess.run(["chown", "root:moory", str(registry_path)], check=True)
         subprocess.run(["systemctl", "restart", "moory.service"], check=True)
         ok(f"Imported {len(selected)} repository/repositories from the token")
+    except BaseException:
+        if original_registry_text is None:
+            registry_path.unlink(missing_ok=True)
+        else:
+            registry_path.write_text(original_registry_text, encoding="utf-8")
+            os.chmod(registry_path, 0o640)
+            subprocess.run(["chown", "root:moory", str(registry_path)], check=False)
+        for clone in reversed(created_clones):
+            shutil.rmtree(clone, ignore_errors=True)
+        raise
     finally:
         askpass.unlink(missing_ok=True)
 
