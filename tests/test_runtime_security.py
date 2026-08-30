@@ -85,3 +85,4 @@ with tempfile.TemporaryDirectory() as temporary:
     loaded = module.github_get_release("demo", "v1.1.0")
     assert loaded["ok"] and loaded["release"]["draft"]
     updated = module.github_update_release("demo", 1, target_commitish="new-head")
+    assert updated["ok"] and captured["body"]["target_commitish"] == "new-head"
