@@ -531,6 +531,7 @@ def run_git(
     }
 
     askpass_path: Path | None = None
+    temporary_token_path: Path | None = None
     auth_config = load_key_value_file(GITHUB_AUTH_CONFIG)
     if auth_config.get("GITHUB_AUTH_MODE") == "fine_grained_pat":
         token_path = Path(auth_config.get("GITHUB_TOKEN_PATH", "")).resolve()
