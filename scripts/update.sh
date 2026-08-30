@@ -44,7 +44,10 @@ python3 -m venv "$NEXT_VENV"
 mv "$ROOT/venv" "$PREVIOUS_VENV"
 mv "$NEXT_VENV" "$ROOT/venv"
 VENV_SWAPPED=1
-"$ROOT/venv/bin/pip" install -r "$SOURCE/requirements.lock"
+# Virtualenv console scripts retain the absolute path used when they were
+# created. Invoke pip through the relocated interpreter and force-reinstall
+# packages so generated entry-point shebangs are rewritten for the final path.
+"$ROOT/venv/bin/python" -m pip install --force-reinstall -r "$SOURCE/requirements.lock"
 install -o moory -g moory -m 640 "$SOURCE/src/moory/server.py" "$ROOT/app/server.py"
 install -o root -g root -m 755 "$SOURCE/scripts/moory" /usr/local/bin/moory
 install -o root -g root -m 755 "$SOURCE/scripts/moory-setup" /usr/local/bin/moory-setup

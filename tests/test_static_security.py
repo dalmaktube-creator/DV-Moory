@@ -88,6 +88,8 @@ assert 'fetch --prune origin' in fetch
 assert 'NEXT_VENV=' in update
 assert 'VENV_SWAPPED=1' in update
 assert 'mv "$PREVIOUS_VENV" "$ROOT/venv"' in update
+assert '"$ROOT/venv/bin/python" -m pip install --force-reinstall' in update
+assert '"$ROOT/venv/bin/pip" install' not in update
 assert 'tools/list' in health
 assert 'github_health' in health
 assert 'projects registry validation' in health
