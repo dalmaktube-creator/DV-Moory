@@ -634,6 +634,26 @@ def is_sensitive_path(path: str) -> bool:
     return any(name.endswith(suffix) for suffix in SENSITIVE_SUFFIXES)
 
 
+def safe_search_candidate(project: ProjectName, path: str) -> Path | None:
+    """Resolve one search result without exposing sensitive files or symlinks."""
+    config = PROJECTS.get(project)
+    if config is None or not path or "\x00" in path or Path(path).is_absolute():
+        return None
+    if is_sensitive_path(path):
+        return None
+    root = config["path"].resolve()
+    unresolved = root / path
+    if unresolved.is_symlink():
+        return None
+    candidate = unresolved.resolve()
+    if root not in candidate.parents or not candidate.is_file():
+        return None
+    relative = candidate.relative_to(root).as_posix()
+    if is_sensitive_path(relative) or candidate.stat().st_size > 1_000_000:
+        return None
+    return candidate
+
+
 def changed_paths(project: ProjectName) -> list[str]:
     result = run_git(project, ["status", "--porcelain", "--untracked-files=all"])
     if not result["ok"]:
