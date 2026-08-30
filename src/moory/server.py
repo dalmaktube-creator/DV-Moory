@@ -1672,9 +1672,26 @@ def inspect_ci_failure(
     }
     if detail != "summary":
         lines = 100 if detail == "evidence" else 500
-        logs = github_get_actions_log(project, run_id, tail_lines=lines, contains="error")
+        logs = github_get_actions_log(project, run_id, tail_lines=lines, contains="")
         if logs.get("ok"):
-            result["log_evidence"] = logs.get("output", "")
+            raw_log = str(logs.get("output", ""))
+            error_pattern = re.compile(r"\b(error|failed|failure|exception|traceback|fatal|panic|timed out)\b", re.IGNORECASE)
+            groups: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            raw_lines = raw_log.splitlines()
+            radius = 1 if detail == "evidence" else 2
+            for index, line in enumerate(raw_lines):
+                normalized = re.sub(r"\s+", " ", line).strip().casefold()
+                if not error_pattern.search(line) or normalized in seen:
+                    continue
+                seen.add(normalized)
+                start = max(0, index - radius)
+                end = min(len(raw_lines), index + radius + 1)
+                groups.append({"line": index + 1, "message": line[:500], "context": "\n".join(raw_lines[start:end])})
+                if len(groups) >= (20 if detail == "evidence" else 60):
+                    break
+            result["error_groups"] = groups
+            result["log_evidence"] = raw_log if detail == "full" else "\n\n".join(group["context"] for group in groups)
             result["truncated"] = bool(logs.get("truncated"))
         else:
             result["partial"] = True
