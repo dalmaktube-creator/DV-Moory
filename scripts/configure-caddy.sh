@@ -64,6 +64,9 @@ ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
 EOF
 cat > /etc/caddy/conf.d/moory.caddy <<EOF
 ${DOMAIN} {
+    request_body {
+        max_size 1MB
+    }
     @unauthorized not header Authorization "Bearer {\$MOORY_TOKEN}"
     respond @unauthorized 401
     reverse_proxy 127.0.0.1:${PORT} {
