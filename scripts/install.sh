@@ -2,6 +2,10 @@
 set -Eeuo pipefail
 
 [[ ${EUID} -eq 0 ]] || { echo "Run: sudo ./scripts/install.sh" >&2; exit 1; }
+[[ -r /etc/os-release ]] || { echo "Ubuntu version could not be detected." >&2; exit 1; }
+. /etc/os-release
+[[ ${ID:-} == ubuntu && ${VERSION_ID:-} == 24.04 ]] || { echo "Moory currently supports Ubuntu 24.04 only." >&2; exit 1; }
+
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 INSTALL_CONFIG=/etc/moory/install.env
 
@@ -40,6 +44,11 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y python3 python3-venv python3-pip git openssh-client curl ca-certificates openssl caddy
+python3 - <<'PY'
+import sys
+if sys.version_info < (3, 12):
+    raise SystemExit("Moory requires Python 3.12 or newer")
+PY
 
 if ! id moory >/dev/null 2>&1; then
   useradd --system --home-dir "$ROOT" --create-home --shell /usr/sbin/nologin moory
