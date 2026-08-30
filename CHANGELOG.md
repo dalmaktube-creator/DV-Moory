@@ -11,6 +11,10 @@
 - Added a composite CI failure inspector with bounded redacted logs.
 - Added patch input normalization and actionable preflight diagnostics.
 - Made failed commit staging transactional and recoverable.
+- Added transactional tracked-file change sets with validation rollback.
+- Added non-mutating release-readiness checks.
+- Added repository-map hints for tests, workflows, and configuration files.
+- Grouped and deduplicated CI failure evidence with bounded context.
 
 ## 1.0.0
 

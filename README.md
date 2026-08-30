@@ -12,8 +12,10 @@ Moory keeps reasoning with the connected agent and moves deterministic repositor
 - `moory_capabilities` teaches connected agents when to escalate context and why summary alone is not edit evidence.
 - Repository file maps are cached by the exact commit SHA while worktree status remains live.
 - `worker_benchmark` reports measured JSON bytes and calls without claiming exact token savings.
-- `inspect_ci_failure` combines failed jobs with bounded redacted log evidence.
+- `inspect_ci_failure` combines failed jobs with bounded, deduplicated, redacted error groups and nearby log context.
 - `github_permission_diagnostics` probes safe read capabilities without mutating repositories.
+- `apply_change_set` preflights tracked-file patches, validates them, and rolls back on validation failure.
+- `release_readiness` reports branch, worktree, remote divergence, latest CI, changelog, and tag checks without mutation.
 
 The original granular read tools remain available, so agents can always inspect exact files and line ranges when compact context is insufficient.
 
