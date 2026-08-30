@@ -1878,17 +1878,18 @@ def inspect_ci_failure(
 
 
 @mcp.tool()
-def github_list_artifacts(project: ProjectName, run_id: int, limit: int = 50) -> dict:
+def github_list_artifacts(project: ProjectName, run_id: int, limit: int = 50, page: int = 1) -> dict:
     """List artifacts produced by one workflow run."""
     try:
         run = require_positive_id(run_id, "run_id")
         safe_limit = max(1, min(limit, 100))
-        data = github_json(project, f"/actions/runs/{run}/artifacts", query={"per_page": safe_limit})
+        safe_page = max(1, min(page, 1000))
+        data = github_json(project, f"/actions/runs/{run}/artifacts", query={"per_page": safe_limit, "page": safe_page})
         artifacts = [
             {"id": item.get("id"), "name": item.get("name"), "size_in_bytes": item.get("size_in_bytes"), "expired": item.get("expired"), "created_at": item.get("created_at"), "expires_at": item.get("expires_at"), "archive_download_url": item.get("archive_download_url")}
             for item in data.get("artifacts", [])[:safe_limit]
         ]
-        return {"ok": True, "total_count": data.get("total_count"), "count": len(artifacts), "artifacts": artifacts}
+        return {"ok": True, "total_count": data.get("total_count"), "count": len(artifacts), "page": safe_page, "truncated": len(artifacts) == safe_limit, "next_page": safe_page + 1 if len(artifacts) == safe_limit else None, "artifacts": artifacts}
     except Exception as error:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
