@@ -3347,6 +3347,48 @@ def github_upsert_milestone(project: ProjectName, title: str, milestone_number: 
         audit("github_upsert_milestone", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_get_requested_reviewers(project: ProjectName, pull_number: int) -> dict:
+    """List users and teams currently requested to review a pull request."""
+    try:
+        number = require_positive_id(pull_number, "pull number"); data = github_json(project, f"/pulls/{number}/requested_reviewers")
+        users = [compact_user(item) for item in data.get("users", [])]
+        teams = [{"id": item.get("id"), "name": item.get("name"), "slug": item.get("slug")} for item in data.get("teams", [])]
+        return {"ok": True, "pull_number": number, "users": users, "teams": teams}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_request_pull_request_reviewers(project: ProjectName, pull_number: int, reviewers: list[str] = [], team_reviewers: list[str] = [], confirmation: str = "") -> dict:
+    """Request pull request reviewers after exact confirmation."""
+    try:
+        number = require_positive_id(pull_number, "pull number")
+        clean_users = list(dict.fromkeys(validate_title(item, "reviewer") for item in reviewers))[:15]
+        clean_teams = list(dict.fromkeys(validate_title(item, "team reviewer") for item in team_reviewers))[:15]
+        if not clean_users and not clean_teams: return {"ok": False, "error": "At least one reviewer or team is required"}
+        required = f"REQUEST REVIEWERS PR #{number}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Review request requires confirmation: {required}"}
+        with WRITE_LOCK: result = github_write_json(project, f"/pulls/{number}/requested_reviewers", method="POST", body={"reviewers": clean_users, "team_reviewers": clean_teams}, audit_action="github_request_pull_request_reviewers")
+        return {"ok": True, "status": result["status"], "review_request": result["data"]}
+    except Exception as error:
+        audit("github_request_pull_request_reviewers", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_add_issue_assignees(project: ProjectName, issue_number: int, assignees: list[str], confirmation: str = "") -> dict:
+    """Add issue or pull request assignees after exact confirmation."""
+    try:
+        number = require_positive_id(issue_number, "issue number"); clean = list(dict.fromkeys(validate_title(item, "assignee") for item in assignees))[:10]
+        if not clean: return {"ok": False, "error": "At least one assignee is required"}
+        required = f"ASSIGN ISSUE #{number}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Assignment requires confirmation: {required}"}
+        with WRITE_LOCK: result = github_write_json(project, f"/issues/{number}/assignees", method="POST", body={"assignees": clean}, audit_action="github_add_issue_assignees")
+        return {"ok": True, "status": result["status"], "issue": compact_issue(result["data"])}
+    except Exception as error:
+        audit("github_add_issue_assignees", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
