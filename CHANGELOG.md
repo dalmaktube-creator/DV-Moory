@@ -15,6 +15,9 @@
 - Added non-mutating release-readiness checks.
 - Added repository-map hints for tests, workflows, and configuration files.
 - Grouped and deduplicated CI failure evidence with bounded context.
+- Added non-executing static validation for Python, JSON, and TOML files.
+- Made static validation the default transactional change-set profile.
+- Added task-oriented tool discovery profiles without claiming dynamic tool hiding.
 
 ## 1.0.0
 
