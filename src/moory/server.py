@@ -2377,6 +2377,57 @@ def github_update_release(
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_list_deployments(project: ProjectName, ref: str = "", environment: str = "", limit: int = 20, page: int = 1) -> dict:
+    """List deployments with optional ref and environment filters."""
+    try:
+        clean_ref = validate_ref(ref, "deployment ref") if ref else ""
+        clean_environment = validate_environment_name(environment) if environment else ""
+        safe_limit = max(1, min(limit, 100)); safe_page = max(1, min(page, 1000))
+        items = github_json(project, "/deployments", query={"ref": clean_ref, "environment": clean_environment, "per_page": safe_limit, "page": safe_page})
+        deployments = [
+            {
+                "id": item.get("id"), "sha": item.get("sha"), "ref": item.get("ref"),
+                "task": item.get("task"), "environment": item.get("environment"),
+                "description": item.get("description"), "transient_environment": item.get("transient_environment"),
+                "production_environment": item.get("production_environment"), "created_at": item.get("created_at"),
+            }
+            for item in items[:safe_limit]
+        ]
+        return {"ok": True, "count": len(deployments), "page": safe_page, "truncated": len(items) == safe_limit, "next_page": safe_page + 1 if len(items) == safe_limit else None, "deployments": deployments}
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_get_deployment(project: ProjectName, deployment_id: int) -> dict:
+    """Read one deployment and up to 100 recent statuses."""
+    try:
+        deployment = require_positive_id(deployment_id, "deployment_id")
+        item = github_json(project, f"/deployments/{deployment}")
+        statuses = github_json(project, f"/deployments/{deployment}/statuses", query={"per_page": 100})
+        compact_statuses = [
+            {
+                "id": status.get("id"), "state": status.get("state"), "description": status.get("description"),
+                "environment": status.get("environment"), "log_url": status.get("log_url"),
+                "environment_url": status.get("environment_url"), "created_at": status.get("created_at"),
+            }
+            for status in statuses[:100]
+        ]
+        return {
+            "ok": True,
+            "deployment": {
+                "id": item.get("id"), "sha": item.get("sha"), "ref": item.get("ref"),
+                "task": item.get("task"), "environment": item.get("environment"),
+                "description": item.get("description"), "transient_environment": item.get("transient_environment"),
+                "production_environment": item.get("production_environment"), "created_at": item.get("created_at"),
+            },
+            "statuses": compact_statuses,
+        }
+    except Exception as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
