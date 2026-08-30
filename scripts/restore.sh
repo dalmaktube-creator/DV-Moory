@@ -55,5 +55,12 @@ PY
 BACKUP="$PROJECTS_FILE.before-restore-$(date +%Y%m%d-%H%M%S)"
 cp -a "$PROJECTS_FILE" "$BACKUP"
 install -o root -g moory -m 640 "$RESTORED" "$PROJECTS_FILE"
-systemctl restart moory.service
+if ! systemctl restart moory.service || ! /usr/local/lib/moory/healthcheck.sh; then
+  echo "Restore health check failed; rolling back registry" >&2
+  install -o root -g moory -m 640 "$BACKUP" "$PROJECTS_FILE"
+  systemctl restart moory.service || true
+  exit 1
+fi
 trap - EXIT
+rm -rf "$TMP"
+echo "Registry restored and health check passed"
