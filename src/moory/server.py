@@ -802,6 +802,7 @@ def worker_context(
     limit: int = 20,
 ) -> dict:
     """Start with summary, use evidence before edits, and full only when evidence is insufficient."""
+    # Keep detail=full as an explicit escape hatch; never silently hide unavailable context.
     config = PROJECTS.get(project)
     if config is None:
         return {"ok": False, "error": "Unknown project"}
