@@ -1495,7 +1495,7 @@ def inspect_ci_failure(
         "workflow_run": data.get("workflow_run"),
         "failed_jobs": failed_jobs,
         "truncated": False,
-        "next_recommended_action": "Request evidence for redacted error lines." if detail == "summary" else "Read exact source ranges implicated by the failure before patching.",
+        "next_recommended_action": "No CI failure was detected." if (data.get("workflow_run") or {}).get("conclusion") == "success" else ("Request evidence for redacted error lines." if detail == "summary" else "Read exact source ranges implicated by the failure before patching."),
     }
     if detail != "summary":
         lines = 100 if detail == "evidence" else 500
