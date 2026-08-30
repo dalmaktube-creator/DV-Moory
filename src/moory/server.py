@@ -3417,6 +3417,36 @@ def github_get_discussion(project: ProjectName, discussion_number: int, comment_
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+@mcp.tool()
+def github_create_discussion(project: ProjectName, category_id: str, title: str, body: str, confirmation: str = "") -> dict:
+    """Create a repository discussion after exact confirmation."""
+    try:
+        clean_title = validate_title(title, "discussion title"); clean_body = validate_body(body, 60000, "discussion body")
+        required = f"CREATE DISCUSSION {clean_title}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Discussion creation requires confirmation: {required}"}
+        owner, repo = github_repo(project).split("/", 1)
+        repository_query = "query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){id}}"; repository_id = github_graphql(project, repository_query, {"owner": owner, "repo": repo})["repository"]["id"]
+        query = "mutation($repository:ID!,$category:ID!,$title:String!,$body:String!){createDiscussion(input:{repositoryId:$repository,categoryId:$category,title:$title,body:$body}){discussion{id number title url}}}"
+        with WRITE_LOCK: data = github_graphql(project, query, {"repository": repository_id, "category": validate_title(category_id, "category id"), "title": clean_title, "body": clean_body}, "github_create_discussion")
+        return {"ok": True, "discussion": data["createDiscussion"]["discussion"]}
+    except Exception as error:
+        audit("github_create_discussion", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
+def github_comment_discussion(project: ProjectName, discussion_id: str, body: str, reply_to_id: str = "", confirmation: str = "") -> dict:
+    """Add a discussion comment or reply after exact confirmation."""
+    try:
+        clean_body = validate_body(body, 60000, "comment body"); clean_id = validate_title(discussion_id, "discussion id")
+        required = f"COMMENT DISCUSSION {clean_id}"
+        if confirmation.strip() != required: return {"ok": False, "error": f"Discussion comment requires confirmation: {required}"}
+        query = "mutation($discussion:ID!,$body:String!,$reply:ID){addDiscussionComment(input:{discussionId:$discussion,body:$body,replyToId:$reply}){comment{id body url createdAt}}}"
+        with WRITE_LOCK: data = github_graphql(project, query, {"discussion": clean_id, "body": clean_body, "reply": validate_title(reply_to_id, "reply id") if reply_to_id else None}, "github_comment_discussion")
+        return {"ok": True, "comment": data["addDiscussionComment"]["comment"]}
+    except Exception as error:
+        audit("github_comment_discussion", project, False, str(error)); return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
 def main() -> None:
     """Run the hardened local Streamable HTTP MCP transport."""
     mcp.run(
