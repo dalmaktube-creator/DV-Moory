@@ -1403,6 +1403,45 @@ def github_get_actions_log(
 
 
 @mcp.tool()
+def inspect_ci_failure(
+    project: ProjectName,
+    run_id: int,
+    detail: Literal["summary", "evidence", "full"] = "summary",
+) -> dict:
+    """Combine a workflow run, failed steps, and bounded redacted logs; escalate detail only when needed."""
+    if detail not in DETAIL_LEVELS:
+        return {"ok": False, "error": "Invalid detail level"}
+    data = github_get_workflow_run(project, run_id)
+    if not data.get("ok"):
+        return data
+    failed_jobs: list[dict[str, Any]] = []
+    for job in data.get("jobs", []):
+        failed_steps = [step for step in job.get("steps", []) if step.get("conclusion") in {"failure", "timed_out", "cancelled", "action_required"}]
+        if job.get("conclusion") in {"failure", "timed_out", "cancelled", "action_required"} or failed_steps:
+            failed_jobs.append({"id": job.get("id"), "name": job.get("name"), "conclusion": job.get("conclusion"), "html_url": job.get("html_url"), "failed_steps": failed_steps})
+    result: dict[str, Any] = {
+        "ok": True,
+        "partial": False,
+        "detail": detail,
+        "available_detail_levels": list(DETAIL_LEVELS),
+        "workflow_run": data.get("workflow_run"),
+        "failed_jobs": failed_jobs,
+        "truncated": False,
+        "next_recommended_action": "Request evidence for redacted error lines." if detail == "summary" else "Read exact source ranges implicated by the failure before patching.",
+    }
+    if detail != "summary":
+        lines = 100 if detail == "evidence" else 500
+        logs = github_get_actions_log(project, run_id, tail_lines=lines, contains="error")
+        if logs.get("ok"):
+            result["log_evidence"] = logs.get("output", "")
+            result["truncated"] = bool(logs.get("truncated"))
+        else:
+            result["partial"] = True
+            result["unavailable"] = {"logs": logs.get("error", "Log access unavailable")}
+    return result
+
+
+@mcp.tool()
 def github_list_artifacts(project: ProjectName, run_id: int, limit: int = 50) -> dict:
     """List artifacts produced by one workflow run."""
     try:
