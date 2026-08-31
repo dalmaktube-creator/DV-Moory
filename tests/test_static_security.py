@@ -162,7 +162,8 @@ assert 'Backup contains unexpected files' in restore
 assert 'Restore health check failed; rolling back registry' in restore
 assert '"next_page": safe_page + 1' in source
 assert 'trap rollback ERR' in caddy
-assert 'fetch --prune origin' in fetch
+assert 'fetch --prune --prune-tags --tags origin' in fetch
+assert 'remote.origin.fetch' in fetch
 assert 'NEXT_VENV=' in update
 assert 'chmod 755 "$NEXT_VENV"' in update
 assert 'VENV_SWAPPED=1' in update
