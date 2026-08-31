@@ -3760,10 +3760,13 @@ def github_get_repository_settings(project: ProjectName) -> dict:
 
 
 @mcp.tool()
-def github_update_repository_settings(project: ProjectName, description: str | None = None, homepage: str | None = None, has_issues: bool | None = None, has_projects: bool | None = None, has_wiki: bool | None = None, has_discussions: bool | None = None, allow_squash_merge: bool | None = None, allow_merge_commit: bool | None = None, allow_rebase_merge: bool | None = None, allow_auto_merge: bool | None = None, delete_branch_on_merge: bool | None = None, web_commit_signoff_required: bool | None = None, confirmation: str = "") -> dict:
+def github_update_repository_settings(project: ProjectName, name: str | None = None, description: str | None = None, homepage: str | None = None, has_issues: bool | None = None, has_projects: bool | None = None, has_wiki: bool | None = None, has_discussions: bool | None = None, allow_squash_merge: bool | None = None, allow_merge_commit: bool | None = None, allow_rebase_merge: bool | None = None, allow_auto_merge: bool | None = None, delete_branch_on_merge: bool | None = None, web_commit_signoff_required: bool | None = None, confirmation: str = "") -> dict:
     """Update non-destructive repository settings after exact confirmation."""
     try:
         payload: dict[str, Any] = {}
+        if name is not None:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", name.strip()): return {"ok": False, "error": "Invalid repository name"}
+            payload["name"] = name.strip()
         if description is not None: payload["description"] = validate_body(description, 350, "description")
         if homepage is not None: payload["homepage"] = validate_external_url(homepage) if homepage else ""
         toggles = {"has_issues": has_issues, "has_projects": has_projects, "has_wiki": has_wiki, "has_discussions": has_discussions, "allow_squash_merge": allow_squash_merge, "allow_merge_commit": allow_merge_commit, "allow_rebase_merge": allow_rebase_merge, "allow_auto_merge": allow_auto_merge, "delete_branch_on_merge": delete_branch_on_merge, "web_commit_signoff_required": web_commit_signoff_required}

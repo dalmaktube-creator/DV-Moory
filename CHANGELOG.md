@@ -4,6 +4,7 @@
 
 - Projects now default to writing every branch, so a project registered without explicit patterns is no longer locked to its default branch.
 - Added `delete_branch` for local and remote branch deletion behind a `DELETE BRANCH <project> <branch>` confirmation; the registered default branch and the checked-out branch stay protected.
+- `github_update_repository_settings` can now rename a repository through a validated `name` argument.
 
 ## 1.3.1 — 2026-08-31
 
