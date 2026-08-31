@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0 — 2026-08-31
+
+- Projects now default to writing every branch, so a project registered without explicit patterns is no longer locked to its default branch.
+- Added `delete_branch` for local and remote branch deletion behind a `DELETE BRANCH <project> <branch>` confirmation; the registered default branch and the checked-out branch stay protected.
+
 ## 1.3.1 — 2026-08-31
 
 - Fixed background fetch stopping at an interactive GitHub credential prompt; `scripts/fetch.sh` now authenticates the same way the server does, with a temporary askpass helper, a short-lived token file, and `GIT_TERMINAL_PROMPT=0`.

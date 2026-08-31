@@ -52,7 +52,7 @@ def load_projects() -> dict[str, dict[str, Any]]:
             raise ValueError("Invalid GitHub repository in registry")
         if not re.fullmatch(r"[A-Za-z0-9._/-]+", branch) or ".." in branch:
             raise ValueError("Invalid branch in registry")
-        raw_write_branches = config.get("write_branches", [])
+        raw_write_branches = config.get("write_branches", ["*"])
         if isinstance(raw_write_branches, str):
             raw_write_branches = [raw_write_branches]
         if not isinstance(raw_write_branches, list) or len(raw_write_branches) > 20:
@@ -122,7 +122,7 @@ GIT_SECRET_PATTERN = (
 
 mcp = MCPServer(
     name="Moory",
-    version="1.3.1",
+    version="1.4.0",
     description="Deterministic self-hosted MCP worker for bounded context, guarded changes, CI inspection, and curated GitHub operations.",
     instructions=(
         "Moory executes deterministic work; the connected agent reasons and decides. Start context work with "
@@ -136,7 +136,7 @@ mcp = MCPServer(
 
 GH_API_BASE = "https://api.github.com"
 GH_API_VERSION = "2022-11-28"
-GH_USER_AGENT = "Moory/1.3.1"
+GH_USER_AGENT = "Moory/1.4.0"
 MAX_GH_JSON_BYTES = 5_000_000
 MAX_GH_LOG_ZIP_BYTES = 20_000_000
 MAX_GH_LOG_TEXT_BYTES = 25_000_000
@@ -1472,6 +1472,37 @@ def create_branch(project: ProjectName, branch: str, start_ref: str = "", confir
         created = run_git(project, arguments)
         audit("create_branch", project, created["ok"], created["error"] or branch)
         return created
+
+
+@mcp.tool()
+def delete_branch(project: ProjectName, branch: str, remote: bool = False, confirmation: str = "") -> dict:
+    """Delete a writable branch locally and optionally on GitHub. Requires an exact confirmation."""
+    with WRITE_LOCK:
+        config = PROJECTS.get(project)
+        if config is None:
+            return {"ok": False, "error": "Unknown project"}
+        if confirmation.strip() != f"DELETE BRANCH {project} {branch}":
+            return {"ok": False, "error": f"Confirmation must be 'DELETE BRANCH {project} {branch}'"}
+        if not READ_REF_PATTERN.match(branch) or ".." in branch or branch.startswith("-"):
+            return {"ok": False, "error": "Branch must be a simple name"}
+        if branch == str(config["branch"]):
+            return {"ok": False, "error": "The registered default branch cannot be deleted"}
+        if not branch_write_allowed(project, branch):
+            return {"ok": False, "error": f"Branch is not writable; allowed: {', '.join(writable_branches(project))}"}
+        ok_branch, active = current_branch(project)
+        if not ok_branch:
+            return {"ok": False, "error": active}
+        if active == branch:
+            return {"ok": False, "error": "Check out another branch before deleting this one"}
+        if not audit("delete_branch_preflight", project, True, branch):
+            return {"ok": False, "error": "Audit log unavailable; branch deletion blocked"}
+        local = run_git(project, ["branch", "--delete", "--force", branch])
+        remote_result: dict[str, Any] | None = None
+        if remote:
+            remote_result = run_git(project, ["push", "origin", "--delete", branch], timeout=90)
+        succeeded = local["ok"] and (remote_result is None or remote_result["ok"])
+        audit("delete_branch", project, succeeded, branch)
+        return {"ok": succeeded, "branch": branch, "local": local, "remote": remote_result}
 
 
 @mcp.tool()
