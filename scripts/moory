@@ -152,11 +152,14 @@ EOF
     error "Allowed branch does not exist on GitHub"
     return
   fi
-  python3 - "$PROJECTS_FILE" "$name" "$repo" "$branch" "$clone" <<'PY'
+  local extra_branches
+  extra_branches=$(ask "Extra writable branches (comma separated, * allowed, empty for none)")
+  python3 - "$PROJECTS_FILE" "$name" "$repo" "$branch" "$clone" "$extra_branches" <<'PY'
 import json,sys,tempfile,os
 from pathlib import Path
 path=Path(sys.argv[1]); data=json.loads(path.read_text()) if path.exists() else {}
-data[sys.argv[2]]={'repo':sys.argv[3],'branch':sys.argv[4],'path':sys.argv[5]}
+write_branches=[part.strip() for part in (sys.argv[6] if len(sys.argv)>6 else '').split(',') if part.strip()]
+data[sys.argv[2]]={'repo':sys.argv[3],'branch':sys.argv[4],'write_branches':write_branches,'path':sys.argv[5]}
 tmp=path.with_suffix('.tmp'); tmp.write_text(json.dumps(data,indent=2,sort_keys=True)+'\n'); os.chmod(tmp,0o640); tmp.replace(path)
 PY
   chown root:moory "$PROJECTS_FILE"; chmod 640 "$PROJECTS_FILE"
