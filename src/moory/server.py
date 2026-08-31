@@ -726,6 +726,26 @@ def current_branch(project: ProjectName) -> tuple[bool, str]:
     return True, result["output"].strip()
 
 
+def branch_pattern_matches(pattern: str, branch: str) -> bool:
+    """Match a branch against an exact name or a simple wildcard pattern."""
+    expression = "".join(".*" if part == "*" else re.escape(part) for part in re.split(r"(\*)", pattern))
+    return bool(re.fullmatch(expression, branch))
+
+
+def writable_branches(project: ProjectName) -> list[str]:
+    """Return every branch pattern that may be written for this project."""
+    config = PROJECTS.get(project) or {}
+    patterns = config.get("write_branches") or ([str(config["branch"])] if config.get("branch") else [])
+    return [str(pattern) for pattern in patterns]
+
+
+def branch_write_allowed(project: ProjectName, branch: str) -> bool:
+    """Check a branch name against the project's writable patterns."""
+    if not branch:
+        return False
+    return any(branch_pattern_matches(pattern, branch) for pattern in writable_branches(project))
+
+
 def guard_project(
     project: ProjectName,
     *,
@@ -738,8 +758,8 @@ def guard_project(
     ok, branch = current_branch(project)
     if not ok:
         return False, branch
-    if branch != config["branch"]:
-        return False, f"Blocked branch: {branch}; allowed: {config['branch']}"
+    if not branch_write_allowed(project, branch):
+        return False, f"Blocked branch: {branch}; allowed: {', '.join(writable_branches(project))}"
 
     if require_clean:
         status = run_git(project, ["status", "--porcelain"])
