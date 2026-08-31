@@ -847,9 +847,12 @@ def list_branches(project: ProjectName, contains: str = "", limit: int = 100) ->
 
 
 @mcp.tool()
-def recent_commits(project: ProjectName, limit: int = 10) -> dict:
-    """Show 1 through 20 recent commits."""
+def recent_commits(project: ProjectName, limit: int = 10, ref: str = "") -> dict:
+    """Show 1 through 20 recent commits on the checked-out branch or any ref."""
     safe_limit = max(1, min(limit, 20))
+    ref_ok, resolved_ref = resolve_read_ref(project, ref)
+    if not ref_ok:
+        return {"ok": False, "error": resolved_ref}
     return run_git(
         project,
         [
@@ -857,16 +860,23 @@ def recent_commits(project: ProjectName, limit: int = 10) -> dict:
             f"-{safe_limit}",
             "--date=iso",
             "--pretty=format:%h | %ad | %an | %s",
+            *([resolved_ref] if resolved_ref else []),
         ],
     )
 
 
 @mcp.tool()
-def git_diff(project: ProjectName, staged: bool = False) -> dict:
-    """Show the unstaged or staged diff without modifying files."""
+def git_diff(project: ProjectName, staged: bool = False, ref: str = "", compare_to: str = "") -> dict:
+    """Diff the working tree, or compare any two refs read-only."""
     arguments = ["diff", "--no-ext-diff"]
     if staged:
         arguments.append("--cached")
+    for candidate in (ref, compare_to):
+        if candidate:
+            ref_ok, resolved_ref = resolve_read_ref(project, candidate)
+            if not ref_ok:
+                return {"ok": False, "error": resolved_ref}
+            arguments.append(resolved_ref)
     return run_git(project, arguments)
 
 
@@ -875,9 +885,14 @@ def list_tracked_files(
     project: ProjectName,
     contains: str = "",
     limit: int = 200,
+    ref: str = "",
 ) -> dict:
     """List tracked files, optionally filtered by part of the path."""
-    result = run_git(project, ["ls-files"], output_limit=1_000_000)
+    ref_ok, resolved_ref = resolve_read_ref(project, ref)
+    if not ref_ok:
+        return {"ok": False, "error": resolved_ref}
+    arguments = ["ls-tree", "-r", "--name-only", resolved_ref] if resolved_ref else ["ls-files"]
+    result = run_git(project, arguments, output_limit=1_000_000)
     if not result["ok"]:
         return result
 
