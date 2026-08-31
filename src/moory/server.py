@@ -912,6 +912,7 @@ def read_tracked_file(
     path: str,
     start_line: int = 1,
     maximum_lines: int = 400,
+    ref: str = "",
 ) -> dict:
     """Read a tracked, non-sensitive file inside an approved project."""
     config = PROJECTS.get(project)
@@ -921,6 +922,30 @@ def read_tracked_file(
         return {"ok": False, "error": "Invalid relative path"}
     if is_sensitive_path(path):
         return {"ok": False, "error": "Sensitive path is blocked"}
+    ref_ok, resolved_ref = resolve_read_ref(project, ref)
+    if not ref_ok:
+        return {"ok": False, "error": resolved_ref}
+    if resolved_ref:
+        listed = run_git(project, ["ls-tree", "-r", "--name-only", resolved_ref, "--", path])
+        if not listed["ok"] or not listed["output"].strip():
+            return {"ok": False, "error": "File is not tracked on that ref"}
+        blob = run_git(project, ["show", f"{resolved_ref}:{path}"], output_limit=1_000_000)
+        if not blob["ok"]:
+            return {"ok": False, "error": "File could not be read on that ref"}
+        ref_lines = blob["output"].splitlines()
+        ref_start = max(1, start_line)
+        ref_count = max(1, min(maximum_lines, 500))
+        ref_selected = ref_lines[ref_start - 1:ref_start - 1 + ref_count]
+        return {
+            "ok": True,
+            "path": path,
+            "ref": ref,
+            "resolved_ref": resolved_ref,
+            "start_line": ref_start,
+            "end_line": ref_start + len(ref_selected) - 1,
+            "total_lines": len(ref_lines),
+            "content": "\n".join(ref_selected),
+        }
 
     root = config["path"].resolve()
     unresolved = root / path
@@ -957,12 +982,43 @@ def search_tracked_code(
     project: ProjectName,
     text: str,
     maximum_results: int = 50,
+    ref: str = "",
 ) -> dict:
     """Search tracked project files for fixed text."""
     if not text or len(text) > 200:
         return {"ok": False, "error": "Search text must be 1 to 200 characters"}
 
     safe_limit = max(1, min(maximum_results, 100))
+    ref_ok, resolved_ref = resolve_read_ref(project, ref)
+    if not ref_ok:
+        return {"ok": False, "error": resolved_ref}
+    if resolved_ref:
+        ref_grep = run_git(
+            project,
+            ["grep", "-n", "-I", "--fixed-strings", "-e", text, resolved_ref],
+            output_limit=1_000_000,
+        )
+        if ref_grep["exit_code"] == 1:
+            return {"ok": True, "ref": ref, "matches": [], "total_safe_matches": 0, "truncated": False, "filtered_sensitive_matches": 0}
+        if not ref_grep["ok"]:
+            return ref_grep
+        ref_matches: list[str] = []
+        ref_filtered = 0
+        for raw in ref_grep["output"].splitlines():
+            parsed = re.match(r"^[0-9a-f]{7,40}:(.+?):(\d+):(.*)$", raw)
+            if not parsed or is_sensitive_path(parsed.group(1)):
+                ref_filtered += 1
+                continue
+            ref_matches.append(f"{parsed.group(1)}:{parsed.group(2)}:{parsed.group(3)}")
+        return {
+            "ok": True,
+            "ref": ref,
+            "resolved_ref": resolved_ref,
+            "matches": ref_matches[:safe_limit],
+            "total_safe_matches": len(ref_matches),
+            "truncated": len(ref_matches) > safe_limit,
+            "filtered_sensitive_matches": ref_filtered,
+        }
     result = run_git(
         project,
         ["grep", "-n", "-I", "--fixed-strings", "--", text],
