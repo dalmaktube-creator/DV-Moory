@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.1.0 — 2026-08-30
+## 1.2.0 — 2026-08-31
+
+- Expanded curated GitHub coverage across deployments, CI, security, supply chain, collaboration, and administration.
+- Kept exact confirmation gates, write locking, audit logging, and the no-delete policy on every new write tool.
+- Documented that repository custom property values require organization-owned repositories.
+- Documented that GitHub Packages endpoints reject GitHub App installation tokens.
+- Documented that classic Projects endpoints are retired and intentionally unsupported.
 
 - Added bounded repository settings inventory and guarded non-destructive updates.
 - Added collaborator inventory, pending invitations, and guarded role grants.
