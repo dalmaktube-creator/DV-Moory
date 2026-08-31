@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.0 — 2026-08-31
+
+- Fixed the public endpoint not surviving a reboot: the Caddy service is now enabled during setup.
+- The health check now fails when the Moory or Caddy services are not enabled for autostart.
+- Added `list_branches` for local and remote branch inventory with commit metadata.
+- Added read-only `ref` support to `read_tracked_file`, `list_tracked_files`, `search_tracked_code`, and `recent_commits`, plus `ref` and `compare_to` on `git_diff`.
+- Reads from another ref never check out, so the working tree stays untouched and sensitive-path filtering still applies.
+- Projects may declare `write_branches` patterns, so writes are no longer limited to a single branch.
+- Added `checkout_branch` and `create_branch` behind exact confirmation gates and a clean-tree requirement.
+- `sync_project` and `push_project` now act on the checked-out writable branch instead of the registered default.
+- The background fetch now retrieves every branch and tag instead of a single branch.
+- The setup menu can register extra writable branch patterns for a project.
+
 ## 1.2.0 — 2026-08-31
 
 - Expanded curated GitHub coverage across deployments, CI, security, supply chain, collaboration, and administration.
