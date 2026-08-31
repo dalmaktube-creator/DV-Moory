@@ -118,6 +118,7 @@ caddy fmt --overwrite /etc/caddy/conf.d/moory.caddy
 caddy validate --config /etc/caddy/Caddyfile
 systemctl daemon-reload
 systemctl restart moory.service
+systemctl enable caddy >/dev/null
 systemctl restart caddy
 trap - ERR
 rm -rf "$BACKUP_DIR"
