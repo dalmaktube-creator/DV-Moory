@@ -1406,7 +1406,9 @@ def sync_project(project: ProjectName) -> dict:
 
         if not audit("sync_preflight", project, True, "write preflight"):
             return {"ok": False, "error": "Audit log unavailable; sync blocked"}
-        branch = PROJECTS[project]["branch"]
+        ok_branch, branch = current_branch(project)
+        if not ok_branch:
+            return {"ok": False, "error": branch}
         fetch = run_git(project, ["fetch", "origin", branch], timeout=90)
         if not fetch["ok"]:
             audit("sync", project, False, fetch["error"])
@@ -1415,6 +1417,61 @@ def sync_project(project: ProjectName) -> dict:
         merge = run_git(project, ["merge", "--ff-only", f"origin/{branch}"])
         audit("sync", project, merge["ok"], merge["error"])
         return merge
+
+
+@mcp.tool()
+def checkout_branch(project: ProjectName, branch: str, confirmation: str = "") -> dict:
+    """Switch the local clone to a writable branch. Requires a clean working tree."""
+    with WRITE_LOCK:
+        if project not in PROJECTS:
+            return {"ok": False, "error": "Unknown project"}
+        if confirmation.strip() != f"CHECKOUT {project} {branch}":
+            return {"ok": False, "error": f"Confirmation must be 'CHECKOUT {project} {branch}'"}
+        if not branch_write_allowed(project, branch):
+            return {"ok": False, "error": f"Branch is not writable; allowed: {', '.join(writable_branches(project))}"}
+        status = run_git(project, ["status", "--porcelain"])
+        if not status["ok"]:
+            return status
+        if status["output"].strip():
+            return {"ok": False, "error": "Working tree must be clean"}
+        if not audit("checkout_preflight", project, True, branch):
+            return {"ok": False, "error": "Audit log unavailable; checkout blocked"}
+        switched = run_git(project, ["checkout", branch])
+        audit("checkout", project, switched["ok"], switched["error"] or branch)
+        return switched
+
+
+@mcp.tool()
+def create_branch(project: ProjectName, branch: str, start_ref: str = "", confirmation: str = "") -> dict:
+    """Create a writable branch from any ref and switch to it. Requires a clean working tree."""
+    with WRITE_LOCK:
+        if project not in PROJECTS:
+            return {"ok": False, "error": "Unknown project"}
+        if confirmation.strip() != f"CREATE BRANCH {project} {branch}":
+            return {"ok": False, "error": f"Confirmation must be 'CREATE BRANCH {project} {branch}'"}
+        if not READ_REF_PATTERN.match(branch) or ".." in branch or branch.startswith("-"):
+            return {"ok": False, "error": "Branch must be a simple name"}
+        if not branch_write_allowed(project, branch):
+            return {"ok": False, "error": f"Branch is not writable; allowed: {', '.join(writable_branches(project))}"}
+        existing = run_git(project, ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"])
+        if existing["output"].strip():
+            return {"ok": False, "error": "Branch already exists; use checkout_branch"}
+        ref_ok, resolved_ref = resolve_read_ref(project, start_ref)
+        if not ref_ok:
+            return {"ok": False, "error": resolved_ref}
+        status = run_git(project, ["status", "--porcelain"])
+        if not status["ok"]:
+            return status
+        if status["output"].strip():
+            return {"ok": False, "error": "Working tree must be clean"}
+        if not audit("create_branch_preflight", project, True, branch):
+            return {"ok": False, "error": "Audit log unavailable; branch creation blocked"}
+        arguments = ["checkout", "-b", branch]
+        if resolved_ref:
+            arguments.append(resolved_ref)
+        created = run_git(project, arguments)
+        audit("create_branch", project, created["ok"], created["error"] or branch)
+        return created
 
 
 @mcp.tool()
@@ -1642,8 +1699,10 @@ def push_project(project: ProjectName) -> dict:
 
         if not audit("push_preflight", project, True, "write preflight"):
             return {"ok": False, "error": "Audit log unavailable; push blocked"}
-        branch = PROJECTS[project]["branch"]
-        pushed = run_git(project, ["push", "origin", branch], timeout=90)
+        ok_branch, branch = current_branch(project)
+        if not ok_branch:
+            return {"ok": False, "error": branch}
+        pushed = run_git(project, ["push", "--set-upstream", "origin", branch], timeout=90)
         audit("push", project, pushed["ok"], pushed["error"])
         return pushed
 
