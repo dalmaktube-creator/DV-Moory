@@ -52,9 +52,21 @@ def load_projects() -> dict[str, dict[str, Any]]:
             raise ValueError("Invalid GitHub repository in registry")
         if not re.fullmatch(r"[A-Za-z0-9._/-]+", branch) or ".." in branch:
             raise ValueError("Invalid branch in registry")
+        raw_write_branches = config.get("write_branches", [])
+        if isinstance(raw_write_branches, str):
+            raw_write_branches = [raw_write_branches]
+        if not isinstance(raw_write_branches, list) or len(raw_write_branches) > 20:
+            raise ValueError("Invalid write branches in registry")
+        write_branches = [branch]
+        for pattern in raw_write_branches:
+            pattern = str(pattern)
+            if not re.fullmatch(r"[A-Za-z0-9._/*-]{1,120}", pattern) or ".." in pattern:
+                raise ValueError("Invalid write branch pattern in registry")
+            if pattern not in write_branches:
+                write_branches.append(pattern)
         if path == REPOS_ROOT or REPOS_ROOT not in path.parents:
             raise ValueError("Project path must be under the Moory repositories directory")
-        projects[name] = {"repo": repo, "branch": branch, "path": path}
+        projects[name] = {"repo": repo, "branch": branch, "write_branches": write_branches, "path": path}
     return projects
 
 
@@ -791,6 +803,7 @@ def list_projects() -> dict:
         name: {
             "path": str(config["path"]),
             "allowed_branch": config["branch"],
+            "write_branches": list(config.get("write_branches") or [config["branch"]]),
         }
         for name, config in PROJECTS.items()
     }
