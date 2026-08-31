@@ -340,7 +340,7 @@ def main() -> None:
         print("Cancelled. Nothing changed.")
         return
     if selection.upper() == "ALL":
-        selected = [repo for repo in repositories if repo["repo"] not in registered_repos]
+        selected = list(repositories)
         if len(selected) > 10:
             confirmation = ask(f"This will clone {len(selected)} repositories. Type ALL again to confirm")
             if confirmation != "ALL":
@@ -354,12 +354,12 @@ def main() -> None:
                 fail("Selection must contain valid repository numbers")
             indexes.add(int(part) - 1)
         selected = [repositories[index] for index in sorted(indexes)]
-        selected = [repo for repo in selected if repo["repo"] not in registered_repos]
 
     if not selected:
-        ok("All selected repositories are already registered")
+        ok("Nothing was selected")
         return
-    if len(registry) + len(selected) > 50:
+    new_repositories = [item for item in selected if item["repo"] not in registered_repos]
+    if len(registry) + len(new_repositories) > 50:
         fail("Moory supports at most 50 registered projects; reduce the selection")
 
 
@@ -394,27 +394,40 @@ def main() -> None:
     try:
         for repository in selected:
             repo = repository["repo"]
-            branch = repository["branch"]
-            alias = project_alias(repo, used)
+            existing_alias = next(
+                (name for name, item in registry.items() if isinstance(item, dict) and str(item.get("repo")) == repo),
+                None,
+            )
+            alias = existing_alias or project_alias(repo, used)
+            existing_entry = registry.get(alias) if isinstance(registry.get(alias), dict) else {}
+            branch = str(existing_entry.get("branch") or repository["branch"])
             clone = (repos_root / alias).resolve()
             if repos_root.resolve() not in clone.parents:
                 fail("Unsafe repository clone path")
-            if clone.exists():
-                fail(f"Clone path already exists: {clone}")
-            info(f"Cloning {repo} as '{alias}'...")
-            clone_url = "https://" + "github.com/" + repo + ".git"
-            git_as_moory(root, askpass, token_path, "clone", clone_url, str(clone))
-            created_clones.append(clone)
-            remote_branch = subprocess.run(
-                ["runuser", "-u", "moory", "--", "git", "-C", str(clone), "show-ref", "--verify", f"refs/remotes/origin/{branch}"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            if remote_branch.returncode == 0:
-                git_as_moory(root, askpass, token_path, "-C", str(clone), "checkout", "-B", branch, f"origin/{branch}")
+            if (clone / ".git").is_dir():
+                info(f"Reusing the existing clone of {repo} at '{alias}'")
             else:
-                git_as_moory(root, askpass, token_path, "-C", str(clone), "checkout", "-B", branch)
-            registry[alias] = {"repo": repo, "branch": branch, "path": str(clone)}
+                if clone.exists():
+                    fail(f"Clone path already exists: {clone}")
+                info(f"Cloning {repo} as '{alias}'...")
+                clone_url = "https://" + "github.com/" + repo + ".git"
+                git_as_moory(root, askpass, token_path, "clone", clone_url, str(clone))
+                created_clones.append(clone)
+                remote_branch = subprocess.run(
+                    ["runuser", "-u", "moory", "--", "git", "-C", str(clone), "show-ref", "--verify", f"refs/remotes/origin/{branch}"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if remote_branch.returncode == 0:
+                    git_as_moory(root, askpass, token_path, "-C", str(clone), "checkout", "-B", branch, f"origin/{branch}")
+                else:
+                    git_as_moory(root, askpass, token_path, "-C", str(clone), "checkout", "-B", branch)
+            registry[alias] = {
+                "repo": repo,
+                "branch": branch,
+                "write_branches": ["*"],
+                "path": str(clone),
+            }
             used.add(alias)
             ok(f"Registered {repo} as '{alias}'")
 
