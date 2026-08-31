@@ -110,7 +110,7 @@ GIT_SECRET_PATTERN = (
 
 mcp = MCPServer(
     name="Moory",
-    version="1.1.0",
+    version="1.2.0",
     description="Deterministic self-hosted MCP worker for bounded context, guarded changes, CI inspection, and curated GitHub operations.",
     instructions=(
         "Moory executes deterministic work; the connected agent reasons and decides. Start context work with "
@@ -124,7 +124,7 @@ mcp = MCPServer(
 
 GH_API_BASE = "https://api.github.com"
 GH_API_VERSION = "2022-11-28"
-GH_USER_AGENT = "Moory/1.1.0"
+GH_USER_AGENT = "Moory/1.2.0"
 MAX_GH_JSON_BYTES = 5_000_000
 MAX_GH_LOG_ZIP_BYTES = 20_000_000
 MAX_GH_LOG_TEXT_BYTES = 25_000_000

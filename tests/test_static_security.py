@@ -4,7 +4,7 @@ root = Path(__file__).resolve().parents[1]
 source = (root / "src/moory/server.py").read_text(encoding="utf-8")
 
 required = [
-    'version="1.1.0"',
+    'version="1.2.0"',
     "WRITE_LOCK",
     "TOKEN_LOCK",
     "Repository is not allowlisted",
