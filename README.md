@@ -39,6 +39,17 @@ Moory keeps reasoning with the connected agent and moves deterministic repositor
 
 The original granular read tools remain available, so agents can always inspect exact files and line ranges when compact context is insufficient.
 
+## GitHub coverage
+
+Moory exposes curated tools for repository content, issues, pull requests, reviews, Actions runs, workflows, checks, commit statuses, artifacts, releases, deployments, environments, Actions variables, Pages, security alerts, advisories, supply-chain metadata, labels, milestones, discussions, merge queues, collaborators, rulesets and custom properties.
+
+Known platform limits:
+
+- Repository custom property values require organization-owned repositories.
+- GitHub Packages endpoints reject GitHub App installation tokens and need a classic token with package scopes.
+- Classic Projects endpoints are retired and intentionally unsupported.
+- Delete, archive and visibility changes are intentionally not implemented.
+
 ## Security model
 
 - Registered repository and branch allowlist
