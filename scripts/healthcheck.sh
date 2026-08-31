@@ -10,6 +10,8 @@ ROOT=${MOORY_ROOT:-/srv/moory}
 PORT=${MOORY_PORT:-8787}
 printf 'Moory service: '; systemctl is-active moory || true
 printf 'Caddy service: '; systemctl is-active caddy || true
+printf 'Moory autostart: '; systemctl is-enabled moory || true
+printf 'Caddy autostart: '; systemctl is-enabled caddy || true
 printf 'MCP listener on port %s: ' "$PORT"; ss -lnt | grep -q "127.0.0.1:${PORT}" && echo listening || echo unavailable
 printf 'Projects registry: '; test -r "$ROOT/config/projects.json" && echo readable || echo unavailable
 printf 'GitHub authentication: '; test -r "$ROOT/config/github-auth.env" && echo configured || echo unavailable
@@ -44,5 +46,7 @@ if command -v runuser >/dev/null; then
 else
   test -w "$ROOT/logs/audit.jsonl" || fail "audit log is not writable"
 fi
+systemctl is-enabled --quiet caddy || fail "caddy is not enabled; the public endpoint will not survive a reboot"
+systemctl is-enabled --quiet moory || fail "moory is not enabled; the MCP service will not survive a reboot"
 (( FAILURES == 0 )) || { printf 'Health check failed with %s problem(s).\n' "$FAILURES" >&2; exit 1; }
 printf 'End-to-end health: valid\n'
