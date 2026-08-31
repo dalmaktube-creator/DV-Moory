@@ -1,6 +1,6 @@
 [project]
 name = "moory-mcp"
-version = "1.3.1"
+version = "1.4.0"
 description = "Self-hosted security-hardened GitHub MCP bridge"
 requires-python = ">=3.12"
 dependencies = [
