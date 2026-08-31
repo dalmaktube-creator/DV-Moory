@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1 — 2026-08-31
+
+- Fixed background fetch stopping at an interactive GitHub credential prompt; `scripts/fetch.sh` now authenticates the same way the server does, with a temporary askpass helper, a short-lived token file, and `GIT_TERMINAL_PROMPT=0`.
+- Background fetch mints a GitHub App installation token when the install uses App authentication, and otherwise reads the allowlisted fine-grained token path.
+
 ## 1.3.0 — 2026-08-31
 
 - Fixed the public endpoint not surviving a reboot: the Caddy service is now enabled during setup.

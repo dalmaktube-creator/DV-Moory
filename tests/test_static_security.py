@@ -4,7 +4,7 @@ root = Path(__file__).resolve().parents[1]
 source = (root / "src/moory/server.py").read_text(encoding="utf-8")
 
 required = [
-    'version="1.3.0"',
+    'version="1.3.1"',
     "branch_write_allowed",
     "writable_branches",
     "CREATE BRANCH",
@@ -164,6 +164,10 @@ assert '"next_page": safe_page + 1' in source
 assert 'trap rollback ERR' in caddy
 assert 'fetch --prune --prune-tags --tags origin' in fetch
 assert 'remote.origin.fetch' in fetch
+assert 'GIT_TERMINAL_PROMPT=0' in fetch
+assert 'GIT_ASKPASS=' in fetch
+assert 'x-access-token' in fetch
+assert 'config/github-auth.env' in fetch
 assert 'NEXT_VENV=' in update
 assert 'chmod 755 "$NEXT_VENV"' in update
 assert 'VENV_SWAPPED=1' in update
