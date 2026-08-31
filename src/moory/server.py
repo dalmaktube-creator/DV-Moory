@@ -802,6 +802,50 @@ def git_status(project: ProjectName) -> dict:
     return run_git(project, ["status", "--short", "--branch"])
 
 
+READ_REF_PATTERN = re.compile(r"^[A-Za-z0-9._/-]{1,120}$")
+
+
+def resolve_read_ref(project: ProjectName, ref: str) -> tuple[bool, str]:
+    """Resolve any branch, tag, or commit for read-only access."""
+    if not ref:
+        return True, ""
+    if ref.startswith("-") or ".." in ref or not READ_REF_PATTERN.match(ref):
+        return False, "Ref must be a simple branch, tag, or commit name"
+    resolved = run_git(project, ["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"])
+    if not resolved["ok"] or not resolved["output"].strip():
+        return False, f"Unknown ref: {ref}"
+    return True, resolved["output"].strip()
+
+
+@mcp.tool()
+def list_branches(project: ProjectName, contains: str = "", limit: int = 100) -> dict:
+    """List local and remote branches so any branch can be inspected read-only."""
+    config = PROJECTS.get(project)
+    if config is None:
+        return {"ok": False, "error": "Unknown project"}
+    result = run_git(
+        project,
+        ["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)|%(committerdate:iso8601)|%(objectname:short)|%(contents:subject)", "refs/heads", "refs/remotes/origin"],
+        output_limit=1_000_000,
+    )
+    if not result["ok"]:
+        return result
+    query = contains.lower().strip()
+    safe_limit = max(1, min(limit, 300))
+    branches = [line for line in result["output"].splitlines() if line and (not query or query in line.lower())]
+    ok, checked_out = current_branch(project)
+    return {
+        "ok": True,
+        "project": project,
+        "checked_out": checked_out if ok else "",
+        "write_allowed_branch": str(config["branch"]),
+        "branches": branches[:safe_limit],
+        "total_branches": len(branches),
+        "truncated": len(branches) > safe_limit,
+        "next_recommended_action": "Pass ref=<branch> to read tools to inspect a branch without checking it out.",
+    }
+
+
 @mcp.tool()
 def recent_commits(project: ProjectName, limit: int = 10) -> dict:
     """Show 1 through 20 recent commits."""
