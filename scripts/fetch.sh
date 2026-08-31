@@ -27,7 +27,8 @@ while IFS=$'\t' read -r name path; do
     continue
   fi
   echo "Fetching $name..."
-  "${git_prefix[@]}" -C "$candidate" fetch --prune origin
+  "${git_prefix[@]}" -C "$candidate" config --replace-all remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+  "${git_prefix[@]}" -C "$candidate" fetch --prune --prune-tags --tags origin
 done < <(python3 - "$PROJECTS_FILE" <<'PY'
 import json, sys
 from pathlib import Path
