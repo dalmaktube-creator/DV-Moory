@@ -2374,6 +2374,45 @@ def github_create_pull_request(
 
 
 @mcp.tool()
+def github_mark_pull_request_ready(
+    project: ProjectName,
+    pull_number: int,
+    confirmation: str = "",
+) -> dict:
+    """Mark a draft pull request ready for review after exact confirmation READY PR #number."""
+    try:
+        number = require_positive_id(pull_number, "pull_number")
+        if confirmation.strip() != f"READY PR #{number}":
+            return {"ok": False, "error": f"Marking ready requires confirmation: READY PR #{number}"}
+        owner, repo = github_repo(project).split("/", 1)
+        query = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id number state isDraft url}}}"
+        pull = (github_graphql(project, query, {"owner": owner, "repo": repo, "number": number}).get("repository") or {}).get("pullRequest")
+        if not pull:
+            return {"ok": False, "error": "Pull request was not found"}
+        if pull.get("state") != "OPEN":
+            return {"ok": False, "error": "Pull request must be open"}
+        if not pull.get("isDraft"):
+            return {"ok": True, "changed": False, "pull_request": {"number": pull.get("number"), "state": pull.get("state"), "draft": False, "html_url": pull.get("url")}}
+        mutation = "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{number state isDraft url}}}"
+        with WRITE_LOCK:
+            data = github_graphql(project, mutation, {"id": pull["id"]}, "github_mark_pull_request_ready")
+        updated = (data.get("markPullRequestReadyForReview") or {}).get("pullRequest") or {}
+        return {
+            "ok": bool(updated) and not bool(updated.get("isDraft")),
+            "changed": True,
+            "pull_request": {
+                "number": updated.get("number"),
+                "state": updated.get("state"),
+                "draft": updated.get("isDraft"),
+                "html_url": updated.get("url"),
+            },
+        }
+    except Exception as error:
+        audit("github_mark_pull_request_ready", project, False, str(error))
+        return {"ok": False, "error": redact_github_text(str(error))[:500]}
+
+
+@mcp.tool()
 def github_update_pull_request(
     project: ProjectName,
     pull_number: int,
