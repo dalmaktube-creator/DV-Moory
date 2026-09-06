@@ -4,7 +4,7 @@ root = Path(__file__).resolve().parents[1]
 source = (root / "src/moory/server.py").read_text(encoding="utf-8")
 
 required = [
-    'version="1.4.0"',
+    'version="1.5.0"',
     "branch_write_allowed",
     "writable_branches",
     "CREATE BRANCH",

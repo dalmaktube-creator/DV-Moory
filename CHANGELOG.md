@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.0 — 2026-09-07
+
+- Added `github_mark_pull_request_ready` to convert a draft pull request to ready-for-review through GitHub GraphQL.
+- The mutation is serialized and audited, requires exact `READY PR #number` confirmation, and is idempotent for pull requests that are already ready.
+
 ## 1.4.0 — 2026-08-31
 
 - Projects now default to writing every branch, so a project registered without explicit patterns is no longer locked to its default branch.
