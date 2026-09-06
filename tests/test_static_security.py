@@ -44,6 +44,7 @@ required = [
     'copy to ',
     "GitHub API path is not allowlisted",
     "github_merge_pull_request",
+    "github_mark_pull_request_ready",
     "github_get_actions_log",
     "github_create_release",
     "Possible secret detected; GitHub write blocked",

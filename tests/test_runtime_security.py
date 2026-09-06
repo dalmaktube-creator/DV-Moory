@@ -180,3 +180,19 @@ with tempfile.TemporaryDirectory() as temporary:
 
     blocked_properties = module.github_update_custom_property_values("demo", [{"property_name": "environment", "value": "production"}], confirmation="")
     assert not blocked_properties["ok"] and "UPDATE CUSTOM PROPERTIES" in blocked_properties["error"]
+
+    blocked_ready = module.github_mark_pull_request_ready("demo", 1, confirmation="")
+    assert not blocked_ready["ok"] and "READY PR #1" in blocked_ready["error"]
+
+    graphql_calls = []
+
+    def fake_ready_graphql(project, query, variables, audit_action=""):
+        graphql_calls.append((query, variables, audit_action))
+        if query.startswith("query"):
+            return {"repository": {"pullRequest": {"id": "PR_1", "number": 1, "state": "OPEN", "isDraft": True, "url": "https://example.test/pr/1"}}}
+        return {"markPullRequestReadyForReview": {"pullRequest": {"number": 1, "state": "OPEN", "isDraft": False, "url": "https://example.test/pr/1"}}}
+
+    module.github_graphql = fake_ready_graphql
+    ready = module.github_mark_pull_request_ready("demo", 1, confirmation="READY PR #1")
+    assert ready["ok"] and ready["changed"] and not ready["pull_request"]["draft"]
+    assert graphql_calls[-1][2] == "github_mark_pull_request_ready"

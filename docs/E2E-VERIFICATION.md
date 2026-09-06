@@ -43,7 +43,7 @@ gate returned.
 `ASSIGN ISSUE #<n>`, `DISPATCH <workflow> ON <ref>`,
 `DISABLE WORKFLOW <file>`, `ENABLE WORKFLOW <file>`, `RERUN RUN <id>`,
 `CANCEL RUN <id>`, `GRANT <role> TO <user>`, `REQUEST REVIEWERS PR #<n>`,
-`ENQUEUE PR #<n>`, `CLOSE PR #<n>`, `REVIEW PR #<n>`, `MERGE PR #<n>`,
+`READY PR #<n>`, `ENQUEUE PR #<n>`, `CLOSE PR #<n>`, `REVIEW PR #<n>`, `MERGE PR #<n>`,
 `BUILD PAGES`, `UPDATE SECRET ALERT <n> TO <state>`,
 `UPDATE CODE ALERT <n> TO <state>`, `STORE ARTIFACT <name>`,
 `DEPLOY ARTIFACT <name> TO <env>`, `SUBMIT DEPENDENCY SNAPSHOT`,
