@@ -5,4 +5,5 @@ bash -n "$ROOT/install.sh" "$ROOT"/scripts/*.sh "$ROOT/scripts/moory" "$ROOT/scr
 python3 -m py_compile "${ROOT}/src/moory/server.py"
 python3 "${ROOT}/tests/test_static_security.py"
 python3 "${ROOT}/tests/test_runtime_security.py"
+python3 "${ROOT}/tests/test_oauth.py"
 echo "All tests passed"

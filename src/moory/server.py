@@ -21,6 +21,15 @@ from typing import Any, Literal
 
 import jwt
 from mcp.server import MCPServer
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
+
+try:
+    from moory.oauth import GitHubOAuthProvider
+except ModuleNotFoundError:  # Running server.py directly from the source tree.
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from oauth import GitHubOAuthProvider
 
 ProjectName = str
 
@@ -83,6 +92,41 @@ MAX_CONTEXT_CACHE_ENTRIES = 64
 DETAIL_LEVELS = ("summary", "evidence", "full")
 MAX_PATCH_BYTES = 500_000
 
+OAUTH_ENABLED = os.environ.get("MOORY_OAUTH_ENABLED", "0").strip() == "1"
+PUBLIC_URL = os.environ.get("MOORY_PUBLIC_URL", "").strip().rstrip("/")
+if not PUBLIC_URL and os.environ.get("MOORY_DOMAIN", "").strip():
+    PUBLIC_URL = "https://" + os.environ["MOORY_DOMAIN"].strip().strip("/")
+OAUTH_SCOPES = ["moory"]
+OAUTH_ALLOWED_USERS = {
+    value.strip()
+    for value in os.environ.get("MOORY_GITHUB_OAUTH_ALLOWED_USERS", "").split(",")
+    if value.strip()
+}
+oauth_provider: GitHubOAuthProvider | None = None
+oauth_settings: AuthSettings | None = None
+if OAUTH_ENABLED:
+    if not PUBLIC_URL:
+        raise ValueError("MOORY_PUBLIC_URL or MOORY_DOMAIN is required when OAuth is enabled")
+    oauth_provider = GitHubOAuthProvider(
+        ROOT,
+        PUBLIC_URL,
+        client_id=os.environ.get("MOORY_GITHUB_OAUTH_CLIENT_ID", "").strip(),
+        client_secret_path=ROOT / "config/github-oauth-client-secret",
+        resource_url=f"{PUBLIC_URL}/mcp",
+        scopes=OAUTH_SCOPES,
+        allowed_users=OAUTH_ALLOWED_USERS,
+    )
+    oauth_settings = AuthSettings(
+        issuer_url=PUBLIC_URL,
+        resource_server_url=f"{PUBLIC_URL}/mcp",
+        required_scopes=OAUTH_SCOPES,
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=OAUTH_SCOPES,
+            default_scopes=OAUTH_SCOPES,
+        ),
+    )
+
 SENSITIVE_SUFFIXES = {
     ".key", ".pem", ".p12", ".pfx", ".jks", ".keystore",
 }
@@ -131,7 +175,15 @@ mcp = MCPServer(
         "Only use registered projects and approved branches. Never expose secrets, force-push, rewrite history, "
         "delete repositories, or run arbitrary shell commands. Validate changes before commit and push."
     ),
+    auth=oauth_settings,
+    auth_server_provider=oauth_provider,
 )
+
+if oauth_provider is not None:
+    @mcp.custom_route("/oauth/github/callback", methods=["GET"], include_in_schema=False)
+    async def github_oauth_callback(request: Any) -> Any:
+        """Complete the upstream GitHub login and return to the MCP client."""
+        return await oauth_provider.github_callback(request)
 
 
 GH_API_BASE = "https://api.github.com"

@@ -10,6 +10,9 @@ config_value() {
 }
 CURRENT_ROOT=$(config_value MOORY_ROOT); CURRENT_ROOT=${CURRENT_ROOT:-/srv/moory}
 CURRENT_PORT=$(config_value MOORY_PORT); CURRENT_PORT=${CURRENT_PORT:-8787}
+OAUTH_ENABLED=$(config_value MOORY_OAUTH_ENABLED); OAUTH_ENABLED=${OAUTH_ENABLED:-0}
+OAUTH_CLIENT_ID=$(config_value MOORY_GITHUB_OAUTH_CLIENT_ID)
+OAUTH_ALLOWED_USERS=$(config_value MOORY_GITHUB_OAUTH_ALLOWED_USERS)
 DOMAIN=${1:-$(config_value MOORY_DOMAIN)}
 PORT=${2:-$CURRENT_PORT}
 
@@ -45,6 +48,10 @@ cat > "$INSTALL_CONFIG" <<EOF
 MOORY_ROOT=$CURRENT_ROOT
 MOORY_PORT=$PORT
 MOORY_DOMAIN=$DOMAIN
+MOORY_OAUTH_ENABLED=$OAUTH_ENABLED
+MOORY_PUBLIC_URL=https://${DOMAIN}
+MOORY_GITHUB_OAUTH_CLIENT_ID=$OAUTH_CLIENT_ID
+MOORY_GITHUB_OAUTH_ALLOWED_USERS=$OAUTH_ALLOWED_USERS
 EOF
 chown root:moory "$INSTALL_CONFIG"; chmod 640 "$INSTALL_CONFIG"
 
@@ -62,7 +69,23 @@ EnvironmentFile=/etc/moory/caddy.env
 ExecStart=
 ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
 EOF
-cat > /etc/caddy/conf.d/moory.caddy <<EOF
+if [[ $OAUTH_ENABLED == 1 ]]; then
+  cat > /etc/caddy/conf.d/moory.caddy <<EOF
+${DOMAIN} {
+    request_body {
+        max_size 1MB
+    }
+    reverse_proxy 127.0.0.1:${PORT} {
+        header_up Host 127.0.0.1:${PORT}
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 30s
+        }
+    }
+}
+EOF
+else
+  cat > /etc/caddy/conf.d/moory.caddy <<EOF
 ${DOMAIN} {
     request_body {
         max_size 1MB
@@ -78,6 +101,7 @@ ${DOMAIN} {
     }
 }
 EOF
+fi
 HTTP3_MARKER='# Moory compatibility: disable HTTP/3 when UDP 443 is occupied'
 if ss -lunH 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)443$'; then
   if grep -Eq '^[[:space:]]*\{' /etc/caddy/Caddyfile; then

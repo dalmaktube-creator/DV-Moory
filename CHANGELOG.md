@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added optional GitHub-backed MCP OAuth 2.1 authorization for ChatGPT Custom
+  MCP connections, including protected-resource metadata, dynamic client
+  registration, PKCE, token rotation, and OAuth-aware Caddy configuration.
+
 ## 1.5.0 — 2026-09-07
 
 - Added `github_mark_pull_request_ready` to convert a draft pull request to ready-for-review through GitHub GraphQL.

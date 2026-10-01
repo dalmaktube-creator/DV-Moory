@@ -2,6 +2,8 @@
 
 - سرور فقط روی `127.0.0.1:8787` گوش می‌دهد.
 - Caddy تنها مسیر HTTPS عمومی است و Bearer authentication را اعمال می‌کند.
+- در حالت OAuth، endpointهای discovery و OAuth عمومی هستند و خود MCP با
+  tokenهای صادرشده‌ی کوتاه‌مدت محافظت می‌شود.
 - GitHub App فقط روی Repositoryهای انتخابی نصب می‌شود.
 - Installation Token کوتاه‌مدت است و هرگز Log نمی‌شود.
 - هر پروژه Deploy Key مستقل دارد.
@@ -16,5 +18,7 @@
 
 1. Bearer Token را تعویض کنید.
 2. GitHub App private key قبلی را Revoke و کلید جدید ایجاد کنید.
-3. Deploy Keyهای هر Repository را تعویض کنید.
-4. Audit log و Security log گیت‌هاب را بررسی کنید.
+3. در حالت OAuth، GitHub OAuth App secret را نیز rotate کنید و سرویس Moory را
+   restart کنید.
+4. Deploy Keyهای هر Repository را تعویض کنید.
+5. Audit log و Security log گیت‌هاب را بررسی کنید.
