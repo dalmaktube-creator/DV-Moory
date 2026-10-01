@@ -87,7 +87,12 @@ for attempt in {1..10}; do
   fi
   sleep 3
 done
-(( HEALTHY == 1 )) || { echo "Updated runtime failed end-to-end health checks" >&2; false; }
+if (( HEALTHY != 1 )); then
+  echo "Updated runtime failed end-to-end health checks; restoring the previous runtime" >&2
+  trap - ERR
+  rollback
+  exit 1
+fi
 rm -rf "$PREVIOUS_VENV"
 VENV_SWAPPED=0
 rm -rf "$BACKUP"; trap - ERR
