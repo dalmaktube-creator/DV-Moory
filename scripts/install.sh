@@ -24,6 +24,10 @@ ask_default() {
 DEFAULT_ROOT=$(config_value MOORY_ROOT); DEFAULT_ROOT=${DEFAULT_ROOT:-/srv/moory}
 DEFAULT_PORT=$(config_value MOORY_PORT); DEFAULT_PORT=${DEFAULT_PORT:-8787}
 DEFAULT_DOMAIN=$(config_value MOORY_DOMAIN)
+DEFAULT_HTTPS_PORT=$(config_value MOORY_HTTPS_PORT)
+if [[ -z $DEFAULT_HTTPS_PORT ]]; then
+  if [[ -n $DEFAULT_DOMAIN ]]; then DEFAULT_HTTPS_PORT=443; else DEFAULT_HTTPS_PORT=8443; fi
+fi
 
 printf '\033[38;5;39m╔══════════════════════════════════════════════════════════════╗\033[0m\n'
 printf '\033[38;5;39m║\033[0m  \033[1;38;5;45mMOORY INSTALLER\033[0m  Secure GitHub ↔ MCP bridge                  \033[38;5;39m║\033[0m\n'
@@ -33,17 +37,19 @@ ROOT=$(ask_default "Data path" "$DEFAULT_ROOT")
 PORT=$(ask_default "Local MCP port" "$DEFAULT_PORT")
 DOMAIN=$(ask_default "Public MCP domain (or type skip)" "${DEFAULT_DOMAIN:-skip}")
 [[ $DOMAIN == skip ]] && DOMAIN=
+HTTPS_PORT=$(ask_default "Public HTTPS port (8443 recommended; 9443 alternative)" "$DEFAULT_HTTPS_PORT")
 
 [[ $ROOT =~ ^/srv/[A-Za-z0-9][A-Za-z0-9._-]{1,63}$ ]] || { echo "Data path must be a simple directory directly under /srv" >&2; exit 1; }
 [[ ! -L $ROOT ]] || { echo "Data path must not be a symbolic link" >&2; exit 1; }
 [[ $PORT =~ ^[0-9]+$ && $PORT -ge 1024 && $PORT -le 65535 ]] || { echo "Port must be between 1024 and 65535" >&2; exit 1; }
+[[ $HTTPS_PORT =~ ^[1-9][0-9]{1,4}$ && ( $HTTPS_PORT -eq 443 || $HTTPS_PORT -ge 1024 ) && $HTTPS_PORT -le 65535 && $HTTPS_PORT -ne $PORT ]] || { echo "Invalid public HTTPS port or collision with local MCP port" >&2; exit 1; }
 if [[ -n $DOMAIN ]]; then
   [[ $DOMAIN =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $DOMAIN == *.* && $DOMAIN != *..* ]] || { echo "Invalid domain name" >&2; exit 1; }
 fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y python3 python3-venv python3-pip git openssh-client curl ca-certificates openssl caddy
+NEEDRESTART_MODE=l apt-get install --no-upgrade -y python3 python3-venv python3-pip git openssh-client curl ca-certificates openssl caddy
 python3 - <<'PY'
 import sys
 if sys.version_info < (3, 12):
@@ -58,6 +64,7 @@ cat > "$INSTALL_CONFIG" <<EOF
 MOORY_ROOT=$ROOT
 MOORY_PORT=$PORT
 MOORY_DOMAIN=$DOMAIN
+MOORY_HTTPS_PORT=$HTTPS_PORT
 EOF
 chown root:moory "$INSTALL_CONFIG"; chmod 640 "$INSTALL_CONFIG"
 
@@ -94,4 +101,4 @@ install -o root -g root -m 644 "$SOURCE_DIR/systemd/moory-fetch.service" /etc/sy
 install -o root -g root -m 644 "$SOURCE_DIR/systemd/moory-fetch.timer" /etc/systemd/system/moory-fetch.timer
 systemctl daemon-reload
 
-MOORY_ROOT="$ROOT" MOORY_PORT="$PORT" MOORY_DOMAIN="$DOMAIN" /usr/local/bin/moory-setup
+MOORY_ROOT="$ROOT" MOORY_PORT="$PORT" MOORY_DOMAIN="$DOMAIN" MOORY_HTTPS_PORT="$HTTPS_PORT" /usr/local/bin/moory-setup
