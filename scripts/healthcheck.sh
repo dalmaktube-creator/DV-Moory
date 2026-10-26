@@ -20,14 +20,16 @@ printf 'GitHub authentication: '; test -r "$ROOT/config/github-auth.env" && echo
 FAILURES=0
 fail() { printf 'FAILED: %s\n' "$1" >&2; FAILURES=$((FAILURES + 1)); }
 DOMAIN=${MOORY_DOMAIN:-}
+HTTPS_PORT=${MOORY_HTTPS_PORT:-443}
+AUTHORITY=$DOMAIN
+[[ $HTTPS_PORT == 443 ]] || AUTHORITY="${DOMAIN}:${HTTPS_PORT}"
 TOKEN_FILE=/etc/moory/caddy.env
 AUTH_HEADER=$(mktemp)
 trap 'rm -f "$AUTH_HEADER"' EXIT
 if [[ -n $DOMAIN && -r $TOKEN_FILE ]]; then
   TOKEN=$(sed -n 's/^MOORY_TOKEN=//p' "$TOKEN_FILE" | tail -n 1)
   printf 'Authorization: Bearer %s\n' "$TOKEN" > "$AUTH_HEADER"; chmod 600 "$AUTH_HEADER"; unset TOKEN
-  ENDPOINT="https://${DOMAIN}/mcp"
-  ENDPOINT="https:"'//'"${DOMAIN}/mcp"
+  ENDPOINT="https://${AUTHORITY}/mcp"
   unauth_code=$(curl -sS -o /dev/null -w '%{http_code}' "$ENDPOINT")
   [[ $unauth_code == 401 ]] || fail "public endpoint must reject unauthenticated requests"
   MCP_ACCEPT='Accept: application/json, text/event-stream'
