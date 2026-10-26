@@ -48,23 +48,6 @@ Secretها هنگام ورود مخفی هستند و با دسترسی محدو
 - اشاره DNS به VPS در حالت Domain اختصاصی
 - افزودن URL و Bearer Token نهایی به Custom MCP در Notion
 
-## اتصال ChatGPT با OAuth
-
-برای اتصال Custom MCP در ChatGPT بدون کپی‌کردن Bearer Token:
-
-1. ابتدا دامنه HTTPS عمومی را در `moory-setup` تنظیم کنید.
-2. یک GitHub OAuth App بسازید.
-3. Callback URL را دقیقاً روی آدرس زیر بگذارید:
-   `https://DOMAIN/oauth/github/callback`
-4. در مرحله `CHATGPT / MCP OAUTH` مقدار Client ID و Client Secret را وارد
-   کنید و نام کاربری مجاز GitHub را در allowlist بگذارید.
-5. در ChatGPT آدرس `https://DOMAIN/mcp` را وارد کنید و روش Authentication را
-   روی OAuth بگذارید.
-
-در این حالت Moory metadataهای استاندارد MCP Authorization، ثبت پویای client،
-Authorization Code + PKCE و tokenهای کوتاه‌مدت را ارائه می‌کند. GitHub فقط برای
-تشخیص هویت کاربر استفاده می‌شود و token آن روی دیسک ذخیره نمی‌شود.
-
 Moory برای این مراحل توضیح، مقدار لازم و توقف برای تأیید را داخل Wizard نمایش می‌دهد.
 
 ## مسیرهای اصلی

@@ -23,29 +23,20 @@ DOMAIN=${MOORY_DOMAIN:-}
 TOKEN_FILE=/etc/moory/caddy.env
 AUTH_HEADER=$(mktemp)
 trap 'rm -f "$AUTH_HEADER"' EXIT
-if [[ -n $DOMAIN && ( -r $TOKEN_FILE || ${MOORY_OAUTH_ENABLED:-0} == 1 ) ]]; then
+if [[ -n $DOMAIN && -r $TOKEN_FILE ]]; then
+  TOKEN=$(sed -n 's/^MOORY_TOKEN=//p' "$TOKEN_FILE" | tail -n 1)
+  printf 'Authorization: Bearer %s\n' "$TOKEN" > "$AUTH_HEADER"; chmod 600 "$AUTH_HEADER"; unset TOKEN
   ENDPOINT="https://${DOMAIN}/mcp"
   ENDPOINT="https:"'//'"${DOMAIN}/mcp"
-  if [[ ${MOORY_OAUTH_ENABLED:-0} == 1 ]]; then
-    metadata_code=$(curl -sS -o /dev/null -w '%{http_code}' "https://${DOMAIN}/.well-known/oauth-protected-resource/mcp")
-    [[ $metadata_code == 200 ]] || fail "OAuth protected resource metadata"
-    auth_metadata_code=$(curl -sS -o /dev/null -w '%{http_code}' "https://${DOMAIN}/.well-known/oauth-authorization-server")
-    [[ $auth_metadata_code == 200 ]] || fail "OAuth authorization metadata"
-    unauth_code=$(curl -sS -o /dev/null -w '%{http_code}' "$ENDPOINT")
-    [[ $unauth_code == 401 ]] || fail "OAuth MCP endpoint must reject unauthenticated requests"
-  else
-    TOKEN=$(sed -n 's/^MOORY_TOKEN=//p' "$TOKEN_FILE" | tail -n 1)
-    printf 'Authorization: Bearer %s\n' "$TOKEN" > "$AUTH_HEADER"; chmod 600 "$AUTH_HEADER"; unset TOKEN
-    unauth_code=$(curl -sS -o /dev/null -w '%{http_code}' "$ENDPOINT")
-    [[ $unauth_code == 401 ]] || fail "public endpoint must reject unauthenticated requests"
-    MCP_ACCEPT='Accept: application/json, text/event-stream'
-    initialize=$(curl --fail-with-body -sS -H @"$AUTH_HEADER" -H "$MCP_ACCEPT" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"moory-health","version":"1"}}}' "$ENDPOINT") || fail "MCP initialize request"
-    grep -q 'protocolVersion' <<<"${initialize:-}" || fail "MCP initialize response"
-    tools=$(curl --fail-with-body -sS -H @"$AUTH_HEADER" -H "$MCP_ACCEPT" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' "$ENDPOINT") || fail "MCP tools/list request"
-    grep -q 'list_projects' <<<"${tools:-}" || fail "MCP tools/list response"
-    github=$(curl --fail-with-body -sS -H @"$AUTH_HEADER" -H "$MCP_ACCEPT" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"github_health","arguments":{}}}' "$ENDPOINT") || fail "GitHub health request"
-    grep -Eq 'Authentication: ok|"authentication"[[:space:]]*:[[:space:]]*"ok"|\\"authentication\\"[[:space:]]*:[[:space:]]*\\"ok\\"' <<<"${github:-}" || fail "GitHub authentication health"
-  fi
+  unauth_code=$(curl -sS -o /dev/null -w '%{http_code}' "$ENDPOINT")
+  [[ $unauth_code == 401 ]] || fail "public endpoint must reject unauthenticated requests"
+  MCP_ACCEPT='Accept: application/json, text/event-stream'
+  initialize=$(curl --fail-with-body -sS -H @"$AUTH_HEADER" -H "$MCP_ACCEPT" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"moory-health","version":"1"}}}' "$ENDPOINT") || fail "MCP initialize request"
+  grep -q 'protocolVersion' <<<"${initialize:-}" || fail "MCP initialize response"
+  tools=$(curl --fail-with-body -sS -H @"$AUTH_HEADER" -H "$MCP_ACCEPT" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' "$ENDPOINT") || fail "MCP tools/list request"
+  grep -q 'list_projects' <<<"${tools:-}" || fail "MCP tools/list response"
+  github=$(curl --fail-with-body -sS -H @"$AUTH_HEADER" -H "$MCP_ACCEPT" -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"github_health","arguments":{}}}' "$ENDPOINT") || fail "GitHub health request"
+  grep -Eq 'Authentication: ok|"authentication"[[:space:]]*:[[:space:]]*"ok"|\\"authentication\\"[[:space:]]*:[[:space:]]*\\"ok\\"' <<<"${github:-}" || fail "GitHub authentication health"
 else
   fail "public domain or token configuration is missing"
 fi

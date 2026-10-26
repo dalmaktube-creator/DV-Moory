@@ -2,9 +2,8 @@
 
 ## Unreleased
 
-- Added optional GitHub-backed MCP OAuth 2.1 authorization for ChatGPT Custom
-  MCP connections, including protected-resource metadata, dynamic client
-  registration, PKCE, token rotation, and OAuth-aware Caddy configuration.
+- Removed the optional ChatGPT MCP OAuth implementation, setup prompts, routes, and documentation. Public MCP access continues to use HTTPS Bearer authentication through Caddy.
+- Preserved runtime health-check rollback during updates and both GitHub authentication modes.
 
 ## 1.5.0 — 2026-09-07
 

@@ -58,7 +58,6 @@ cat > "$INSTALL_CONFIG" <<EOF
 MOORY_ROOT=$ROOT
 MOORY_PORT=$PORT
 MOORY_DOMAIN=$DOMAIN
-MOORY_OAUTH_ENABLED=0
 EOF
 chown root:moory "$INSTALL_CONFIG"; chmod 640 "$INSTALL_CONFIG"
 
@@ -70,7 +69,6 @@ python3 -m venv "$ROOT/venv"
 "$ROOT/venv/bin/pip" install --upgrade pip
 "$ROOT/venv/bin/pip" install -r "$SOURCE_DIR/requirements.lock"
 install -o moory -g moory -m 640 "$SOURCE_DIR/src/moory/server.py" "$ROOT/app/server.py"
-install -o moory -g moory -m 640 "$SOURCE_DIR/src/moory/oauth.py" "$ROOT/app/oauth.py"
 "$ROOT/venv/bin/python" -m py_compile "$ROOT/app/server.py"
 
 [[ -f "$ROOT/config/projects.json" ]] || printf '{}\n' > "$ROOT/config/projects.json"

@@ -14,12 +14,6 @@ box() {
 }
 ok(){ printf "${GREEN}✔ %s${RESET}\n" "$*"; }; warn(){ printf "${YELLOW}⚠ %s${RESET}\n" "$*"; }; fail(){ printf "${RED}✘ %s${RESET}\n" "$*" >&2; exit 1; }
 ask(){ local p=$1 v; printf "${CYAN}%s${RESET}: " "$p" >&2; read -r v < /dev/tty; printf '%s' "$v"; }
-set_install_value() {
-  local key=$1 value=$2 tmp
-  tmp=$(mktemp)
-  { grep -v "^${key}=" /etc/moory/install.env 2>/dev/null || true; printf '%s=%s\n' "$key" "$value"; } > "$tmp"
-  chown root:moory "$tmp"; chmod 640 "$tmp"; mv "$tmp" /etc/moory/install.env
-}
 
 box
 printf "${BOLD}Choose GitHub authentication mode${RESET}\n\n"
@@ -87,40 +81,10 @@ else
   ENDPOINT=$(ask "Select [1/2]")
   if [[ $ENDPOINT == 1 ]]; then
     DOMAIN=$(ask "Domain pointing to this server (example: mcp.example.com)")
-    MOORY_DOMAIN=$DOMAIN
     /usr/local/bin/moory-configure-caddy "$DOMAIN"
   else
     warn "HTTPS setup skipped. Notion needs a public HTTPS MCP URL."
   fi
-fi
-
-if [[ -n ${MOORY_DOMAIN:-} ]]; then
-  printf "\n${BOLD}CHATGPT / MCP OAUTH${RESET}\n"
-  printf "OAuth lets ChatGPT connect without pasting the legacy Bearer token.\n"
-  printf "It uses GitHub only to sign you in, then issues short-lived Moory tokens.\n\n"
-  OAUTH_ANSWER=$(ask "Enable ChatGPT OAuth? [y/N]")
-  if [[ ${OAUTH_ANSWER,,} == y || ${OAUTH_ANSWER,,} == yes ]]; then
-    OAUTH_CLIENT_ID=$(ask "GitHub OAuth App Client ID")
-    [[ $OAUTH_CLIENT_ID =~ ^[A-Za-z0-9_-]{8,100}$ ]] || fail "Invalid GitHub OAuth client ID"
-    read -rsp "GitHub OAuth App client secret (hidden): " OAUTH_CLIENT_SECRET < /dev/tty; echo
-    [[ ${#OAUTH_CLIENT_SECRET} -ge 20 && $OAUTH_CLIENT_SECRET != *[[:space:]]* ]] || fail "Invalid GitHub OAuth client secret"
-    OAUTH_ALLOWED_USERS=$(ask "Allowed GitHub username(s), comma separated")
-    [[ $OAUTH_ALLOWED_USERS =~ ^[A-Za-z0-9-]+(,[A-Za-z0-9-]+)*$ ]] || fail "Invalid allowed GitHub username list"
-    printf '%s' "$OAUTH_CLIENT_SECRET" > "$CONFIG/github-oauth-client-secret"
-    chown root:moory "$CONFIG/github-oauth-client-secret"; chmod 640 "$CONFIG/github-oauth-client-secret"
-    set_install_value MOORY_OAUTH_ENABLED 1
-    set_install_value MOORY_PUBLIC_URL "https://${MOORY_DOMAIN}"
-    set_install_value MOORY_GITHUB_OAUTH_CLIENT_ID "$OAUTH_CLIENT_ID"
-    set_install_value MOORY_GITHUB_OAUTH_ALLOWED_USERS "$OAUTH_ALLOWED_USERS"
-    unset OAUTH_CLIENT_SECRET
-    /usr/local/bin/moory-configure-caddy "$MOORY_DOMAIN"
-    ok "ChatGPT OAuth enabled"
-    warn "In GitHub OAuth App settings, set callback URL to https://${MOORY_DOMAIN}/oauth/github/callback"
-  else
-    set_install_value MOORY_OAUTH_ENABLED 0
-  fi
-else
-  warn "Configure a public domain before enabling ChatGPT OAuth."
 fi
 
 systemctl enable --now moory.service

@@ -62,31 +62,6 @@ Known platform limits:
 - Sanitized audit logs
 - Hardened systemd sandbox
 - Local-only MCP listener behind HTTPS Bearer authentication
-- Optional MCP OAuth 2.1 mode for ChatGPT and other OAuth-capable clients
-
-## ChatGPT OAuth mode
-
-Moory can expose the MCP Authorization Server endpoints required by ChatGPT's
-Custom MCP connection. In this mode, ChatGPT uses Authorization Code + PKCE;
-Moory sends the user to GitHub for sign-in and then issues its own short-lived
-MCP access and refresh tokens. The GitHub OAuth token is exchanged only for the
-user identity and is not stored. Setup also requires an explicit allowlist of
-GitHub usernames; an arbitrary GitHub account cannot use the bridge.
-
-During `moory-setup`, configure the HTTPS domain first, then enable
-**ChatGPT / MCP OAuth**. Create a GitHub OAuth App with this callback URL:
-
-```text
-https://YOUR_DOMAIN/oauth/github/callback
-```
-
-After setup, use `https://YOUR_DOMAIN/mcp` in ChatGPT's Custom MCP server
-configuration and select OAuth. Do not put the legacy Bearer token into
-ChatGPT when OAuth mode is enabled.
-
-The OAuth mode publishes protected-resource metadata, authorization-server
-metadata, dynamic client registration, `/authorize`, and `/token`. The legacy
-Caddy Bearer-token mode remains the default when OAuth is disabled.
 
 ## Supported platform
 
