@@ -3,7 +3,6 @@
 ```text
 Notion AI
   -> HTTPS + Bearer / Caddy
-     یا HTTPS + OAuth 2.1 / GitHub sign-in
     -> MCP Server on 127.0.0.1
       -> Restricted Git CLI adapter
       -> Curated GitHub App API adapter

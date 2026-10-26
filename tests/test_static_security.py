@@ -189,3 +189,24 @@ assert 'ALL to register every available repository' in importer
 assert 'moory-app-token-' in importer
 assert 'temporary_token_path.unlink' in importer
 assert 'pull ' not in fetch
+
+
+# The public endpoint remains Bearer-only; retired client authorization code
+# must not re-enter the runtime or installation/update paths.
+assert not (root / "src/moory/oauth.py").exists()
+assert not (root / "tests/test_oauth.py").exists()
+for relative in (
+    "src/moory/server.py", "scripts/install.sh", "scripts/update.sh",
+    "scripts/moory-setup", "scripts/configure-caddy.sh", "scripts/healthcheck.sh",
+    "scripts/test.sh", "README.md", "docs/INSTALL-FA.md",
+    "docs/SECURITY-FA.md", "docs/ARCHITECTURE-FA.md",
+):
+    text = (root / relative).read_text(encoding="utf-8")
+    for marker in ("MOORY_OAUTH", "GitHubOAuthProvider", "oauth.py", "/oauth/", "ChatGPT"):
+        assert marker not in text, (relative, marker)
+assert '@unauthorized not header Authorization "Bearer {\\$MOORY_TOKEN}"' in caddy
+assert 'respond @unauthorized 401' in caddy
+assert 'public endpoint must reject unauthenticated requests' in health
+assert 'if /usr/local/lib/moory/healthcheck.sh; then' in update
+assert 'Updated runtime failed end-to-end health checks' in update
+print("Bearer-only authentication regression checks passed")

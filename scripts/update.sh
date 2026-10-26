@@ -16,11 +16,6 @@ PREVIOUS_VENV="$ROOT/.venv-previous"
 VENV_SWAPPED=0
 rm -rf "$PREVIOUS_VENV"
 cp -a "$ROOT/app/server.py" "$BACKUP/server.py"
-if [[ -f "$ROOT/app/oauth.py" ]]; then
-  cp -a "$ROOT/app/oauth.py" "$BACKUP/oauth.py"
-else
-  : > "$BACKUP/oauth.py.missing"
-fi
 cp -a /usr/local/bin/moory "$BACKUP/moory"
 cp -a /usr/local/bin/moory-setup "$BACKUP/moory-setup"
 cp -a /usr/local/bin/moory-configure-caddy "$BACKUP/moory-configure-caddy"
@@ -33,11 +28,6 @@ rollback() {
     mv "$PREVIOUS_VENV" "$ROOT/venv"
   fi
   cp -a "$BACKUP/server.py" "$ROOT/app/server.py"
-  if [[ -f "$BACKUP/oauth.py" ]]; then
-    cp -a "$BACKUP/oauth.py" "$ROOT/app/oauth.py"
-  else
-    rm -f "$ROOT/app/oauth.py"
-  fi
   cp -a "$BACKUP/moory" "$BACKUP/moory-setup" "$BACKUP/moory-configure-caddy" /usr/local/bin/
   rm -rf /usr/local/lib/moory
   cp -a "$BACKUP/lib-moory" /usr/local/lib/moory
@@ -52,7 +42,6 @@ python3 -m venv "$NEXT_VENV"
 chmod 755 "$NEXT_VENV"
 "$NEXT_VENV/bin/pip" install -r "$SOURCE/requirements.lock"
 "$NEXT_VENV/bin/python" -m py_compile "$SOURCE/src/moory/server.py"
-"$NEXT_VENV/bin/python" -m py_compile "$SOURCE/src/moory/oauth.py"
 mv "$ROOT/venv" "$PREVIOUS_VENV"
 mv "$NEXT_VENV" "$ROOT/venv"
 VENV_SWAPPED=1
@@ -61,7 +50,6 @@ VENV_SWAPPED=1
 # packages so generated entry-point shebangs are rewritten for the final path.
 "$ROOT/venv/bin/python" -m pip install --force-reinstall -r "$SOURCE/requirements.lock"
 install -o moory -g moory -m 640 "$SOURCE/src/moory/server.py" "$ROOT/app/server.py"
-install -o moory -g moory -m 640 "$SOURCE/src/moory/oauth.py" "$ROOT/app/oauth.py"
 install -o root -g root -m 755 "$SOURCE/scripts/moory" /usr/local/bin/moory
 install -o root -g root -m 755 "$SOURCE/scripts/moory-setup" /usr/local/bin/moory-setup
 install -o root -g root -m 755 "$SOURCE/scripts/configure-caddy.sh" /usr/local/bin/moory-configure-caddy
@@ -76,7 +64,6 @@ chmod 644 /etc/systemd/system/moory.service
 install -o root -g root -m 644 "$SOURCE/systemd/moory-fetch.service" /etc/systemd/system/moory-fetch.service
 install -o root -g root -m 644 "$SOURCE/systemd/moory-fetch.timer" /etc/systemd/system/moory-fetch.timer
 "$ROOT/venv/bin/python" -m py_compile "$ROOT/app/server.py"
-"$ROOT/venv/bin/python" -m py_compile "$ROOT/app/oauth.py"
 systemctl daemon-reload
 systemctl restart moory
 HEALTHY=0
