@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- New installs default to public HTTPS 8443 (9443 alternative), separately from the local MCP listener; existing endpoints retain 443 unless changed.
+- Persist the public port across setup, Caddy, connection display and health checks; preflight both protocols, preserve shared Caddy options, and keep automatic certificates using HTTP-01 on TCP 80.
+- Fail closed on endpoint backup errors and roll back newly added UFW rules when endpoint configuration fails.
+
 - Removed the optional ChatGPT MCP OAuth implementation, setup prompts, routes, and documentation. Public MCP access continues to use HTTPS Bearer authentication through Caddy.
 - Preserved runtime health-check rollback during updates and both GitHub authentication modes.
 

@@ -81,3 +81,24 @@ Known platform limits:
 ## License
 
 Apache License 2.0.
+
+
+## Public HTTPS port
+
+New installations default to public HTTPS port **8443**, independently of the
+local-only MCP listener **127.0.0.1:8787**. Use **9443** as an alternative when
+8443 is occupied. The installer checks both TCP and UDP on the chosen public
+port and refuses another service's listener; it does not stop that service.
+The endpoint is `https://YOUR_DOMAIN:8443/mcp`. Custom-port acceptance by the
+MCP client must be verified during connection setup.
+
+Keep DNS pointed at the server and **TCP 80** reachable for automatic ACME
+HTTP-01 certificate issuance and renewal, plus **TCP 8443** (or the selected
+port) for MCP. Also configure the provider firewall if present. MCP itself
+does not require UDP. Existing Caddy global options and unrelated tunnels on
+UDP 443 are preserved; this setup does not enable HTTP/3 in a shared config.
+
+The public port is saved as `MOORY_HTTPS_PORT`. Existing installations without
+that setting retain port 443 until explicitly changed. The management menu,
+connection URL, and end-to-end health check all use the saved public port.
+To configure explicitly: `sudo moory-configure-caddy YOUR_DOMAIN 8787 8443`.
