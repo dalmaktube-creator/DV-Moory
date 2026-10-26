@@ -1,0 +1,21 @@
+name: Restore cleanup branch executable modes
+on:
+  push:
+    branches: [cleanup/remove-chatgpt-oauth]
+    paths: [.github/workflows/cleanup-file-modes.yml]
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: cleanup/remove-chatgpt-oauth
+      - name: Restore existing script modes and remove this one-time workflow
+        run: |
+          git update-index --chmod=+x scripts/configure-caddy.sh scripts/healthcheck.sh scripts/install.sh scripts/moory-setup scripts/test.sh scripts/update.sh
+          git rm .github/workflows/cleanup-file-modes.yml
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "chore: preserve executable installer modes"
+          git push origin HEAD:refs/heads/cleanup/remove-chatgpt-oauth
