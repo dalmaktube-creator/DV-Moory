@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Compact generated MCP JSON without dropping keys, output schemas or structured content; retain granular tools.
+- Add exact UTF-8 multi-file reads, byte-content SHA-256 identities and resumable line/column cursors, including very long lines and CRLF files.
+- Hold the reentrant write lock across change-set identity checks, apply, static validation and rollback; validate new text files and remove additions when rollback is required.
+- Scan complete bounded CI archives for failures, cap repeated source/assertion context, and expose SHA-guarded full-log pagination rather than silently losing long lines or archive members.
+- Disclose Git output truncation and fail static validation closed when its inventory is incomplete.
+- Add real-Git concurrency/rollback tests, a 240,000-character CI regression and pinned-SDK Streamable HTTP round-trip coverage.
+
 - New installs default to public HTTPS 8443 (9443 alternative), separately from the local MCP listener; existing endpoints retain 443 unless changed.
 - Persist the public port across setup, Caddy, connection display and health checks; preflight both protocols, preserve shared Caddy options, and keep automatic certificates using HTTP-01 on TCP 80.
 - Fail closed on endpoint backup errors and roll back newly added UFW rules when endpoint configuration fails.

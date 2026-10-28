@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import io
 import json
 import os
@@ -21,6 +22,7 @@ from typing import Any, Literal
 
 import jwt
 from mcp.server import MCPServer
+from mcp.types import CallToolResult, TextContent
 
 ProjectName = str
 
@@ -74,7 +76,7 @@ PROJECTS = load_projects()
 AUDIT_LOG = ROOT / "logs/audit.jsonl"
 PATCH_TMP_DIR = ROOT / "logs"
 GITHUB_AUTH_CONFIG = ROOT / "config/github-auth.env"
-WRITE_LOCK = threading.Lock()
+WRITE_LOCK = threading.RLock()
 TOKEN_LOCK = threading.Lock()
 CONTEXT_CACHE_LOCK = threading.Lock()
 GH_TOKEN_CACHE: dict[str, Any] = {"token": "", "expires_epoch": 0, "expires_at": "", "permissions": {}, "repository_selection": "", "auth_mode": ""}
@@ -120,7 +122,30 @@ GIT_SECRET_PATTERN = (
     r"|npm_[A-Za-z0-9]{36}"
 )
 
-mcp = MCPServer(
+class CompactMCPServer(MCPServer):
+    """Compact JSON whitespace only; retain output schemas and all structured data."""
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
+        result = await super().call_tool(name, arguments, context)
+        if isinstance(result, CallToolResult) and len(result.content) == 1:
+            block = result.content[0]
+            if isinstance(block, TextContent):
+                try:
+                    parsed = json.loads(block.text)
+                except (ValueError, TypeError):
+                    return result
+                if isinstance(parsed, (dict, list)) and (
+                    result.structured_content is None or parsed == result.structured_content
+                ):
+                    try:
+                        compact = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+                    except (ValueError, TypeError):
+                        return result
+                    result = result.model_copy(update={"content": [block.model_copy(update={"text": compact})]})
+        return result
+
+
+mcp = CompactMCPServer(
     name="Moory",
     version="1.5.0",
     description="Deterministic self-hosted MCP worker for bounded context, guarded changes, CI inspection, and curated GitHub operations.",
@@ -698,6 +723,9 @@ def run_git(
         "exit_code": result.returncode,
         "output": result.stdout[-output_limit:],
         "error": result.stderr[-50_000:],
+        "truncated": len(result.stdout) > output_limit or len(result.stderr) > 50_000,
+        "output_characters": len(result.stdout),
+        "error_characters": len(result.stderr),
     }
 
 
@@ -939,6 +967,55 @@ def list_tracked_files(
     return result
 
 
+def _tracked_file_bytes(project: ProjectName, path: str, ref: str) -> tuple[bytes, str, str]:
+    config = PROJECTS.get(project)
+    if config is None:
+        raise ValueError("Unknown project")
+    if not path or "\x00" in path or Path(path).is_absolute() or ".." in Path(path).parts or ".git" in Path(path).parts:
+        raise ValueError("Invalid relative path")
+    if is_sensitive_path(path):
+        raise ValueError("Sensitive path is blocked")
+    ref_ok, resolved_ref = resolve_read_ref(project, ref)
+    if not ref_ok:
+        raise ValueError(resolved_ref)
+    root = config["path"].resolve()
+    if resolved_ref:
+        entry = run_git(project, ["ls-tree", resolved_ref, "--", path])
+        fields = entry.get("output", "").rstrip("\n").split("\t", 1)
+        if not entry.get("ok") or len(fields) != 2 or fields[1] != path:
+            raise ValueError("File is not tracked on that ref")
+        mode, kind, oid = fields[0].split()
+        if kind != "blob" or mode == "120000" or not re.fullmatch(r"[0-9a-f]{40,64}", oid):
+            raise ValueError("Symbolic links are not readable")
+        size = run_git(project, ["cat-file", "-s", oid])
+        if not size.get("ok") or int(size["output"].strip()) > 1_000_000:
+            raise ValueError("File is too large")
+        # A verified blob object, not a path or command supplied by the caller.
+        blob = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "blob", oid],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=15, check=False, shell=False,
+        )
+        if blob.returncode or len(blob.stdout) > 1_000_000:
+            raise ValueError("File could not be read on that ref")
+        return blob.stdout, resolved_ref, oid
+    candidate = root / path
+    if any(part.is_symlink() for part in [candidate, *candidate.parents] if part != root and root in part.parents):
+        raise ValueError("Symbolic links are not readable")
+    candidate = candidate.resolve()
+    if root not in candidate.parents:
+        raise ValueError("Path traversal is blocked")
+    tracked = run_git(project, ["ls-files", "--error-unmatch", "--", path])
+    if not tracked.get("ok") or not candidate.is_file():
+        raise ValueError("File is not tracked or does not exist")
+    if candidate.stat().st_size > 1_000_000:
+        raise ValueError("File is too large")
+    data = candidate.read_bytes()
+    if len(data) > 1_000_000:
+        raise ValueError("File is too large")
+    return data, "", ""
+
+
 @mcp.tool()
 def read_tracked_file(
     project: ProjectName,
@@ -946,68 +1023,69 @@ def read_tracked_file(
     start_line: int = 1,
     maximum_lines: int = 400,
     ref: str = "",
+    start_column: int = 0,
+    maximum_chars: int = 20_000,
+    expected_sha256: str = "",
 ) -> dict:
-    """Read a tracked, non-sensitive file inside an approved project."""
-    config = PROJECTS.get(project)
-    if config is None:
-        return {"ok": False, "error": "Unknown project"}
-    if not path or "\x00" in path or Path(path).is_absolute():
-        return {"ok": False, "error": "Invalid relative path"}
-    if is_sensitive_path(path):
-        return {"ok": False, "error": "Sensitive path is blocked"}
-    ref_ok, resolved_ref = resolve_read_ref(project, ref)
-    if not ref_ok:
-        return {"ok": False, "error": resolved_ref}
-    if resolved_ref:
-        listed = run_git(project, ["ls-tree", "-r", "--name-only", resolved_ref, "--", path])
-        if not listed["ok"] or not listed["output"].strip():
-            return {"ok": False, "error": "File is not tracked on that ref"}
-        blob = run_git(project, ["show", f"{resolved_ref}:{path}"], output_limit=1_000_000)
-        if not blob["ok"]:
-            return {"ok": False, "error": "File could not be read on that ref"}
-        ref_lines = blob["output"].splitlines()
-        ref_start = max(1, start_line)
-        ref_count = max(1, min(maximum_lines, 500))
-        ref_selected = ref_lines[ref_start - 1:ref_start - 1 + ref_count]
+    """Read exact UTF-8 content with a SHA-256 identity and resumable line/column cursor."""
+    try:
+        data, resolved_ref, oid = _tracked_file_bytes(project, path, ref)
+        digest = hashlib.sha256(data).hexdigest()
+        if expected_sha256 and digest != expected_sha256:
+            return {"ok": False, "error": "Source changed; restart the read", "sha256": digest}
+        text = data.decode("utf-8")
+        lines = text.splitlines(keepends=True)
+        if start_line < 1 or start_column < 0 or start_line > max(1, len(lines) + 1):
+            raise ValueError("Invalid read cursor")
+        index = start_line - 1
+        if start_column and (index >= len(lines) or start_column >= len(lines[index])):
+            raise ValueError("Invalid read column")
+        selected = "".join(lines[index:index + max(1, min(maximum_lines, 500))])[start_column:]
+        content = selected[:max(1, min(maximum_chars, 50_000))]
+        position = start_column + len(content)
+        next_index = index
+        while next_index < len(lines) and position >= len(lines[next_index]):
+            position -= len(lines[next_index])
+            next_index += 1
+        more = next_index < len(lines)
         return {
-            "ok": True,
-            "path": path,
-            "ref": ref,
-            "resolved_ref": resolved_ref,
-            "start_line": ref_start,
-            "end_line": ref_start + len(ref_selected) - 1,
-            "total_lines": len(ref_lines),
-            "content": "\n".join(ref_selected),
+            "ok": True, "path": path, "ref": ref, "resolved_ref": resolved_ref or None,
+            "blob_sha": oid or None, "sha256": digest, "size_bytes": len(data),
+            "start_line": start_line, "start_column": start_column,
+            "end_line": next_index + (1 if position else 0), "total_lines": len(lines),
+            "content": content, "truncated": more,
+            "next_cursor": {"start_line": next_index + 1, "start_column": position, "expected_sha256": digest} if more else None,
         }
+    except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as error:
+        return {"ok": False, "path": path, "error": redact_github_text(str(error))[:500]}
 
-    root = config["path"].resolve()
-    unresolved = root / path
-    if unresolved.is_symlink():
-        return {"ok": False, "error": "Symbolic links are not readable"}
-    candidate = unresolved.resolve()
-    if root not in candidate.parents:
-        return {"ok": False, "error": "Path traversal is blocked"}
 
-    tracked = run_git(project, ["ls-files", "--error-unmatch", "--", path])
-    if not tracked["ok"]:
-        return {"ok": False, "error": "File is not tracked"}
-    if not candidate.is_file():
-        return {"ok": False, "error": "File does not exist"}
-    if candidate.stat().st_size > 1_000_000:
-        return {"ok": False, "error": "File is too large"}
-
-    lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
-    safe_start = max(1, start_line)
-    safe_count = max(1, min(maximum_lines, 500))
-    selected = lines[safe_start - 1:safe_start - 1 + safe_count]
-    return {
-        "ok": True,
-        "path": path,
-        "start_line": safe_start,
-        "end_line": safe_start + len(selected) - 1,
-        "total_lines": len(lines),
-        "content": "\n".join(selected),
-    }
+@mcp.tool()
+def read_tracked_files(project: ProjectName, requests: list[dict[str, Any]], ref: str = "", maximum_chars: int = 40_000) -> dict:
+    """Read up to eight exact file ranges in one call; every range keeps its own identity and cursor."""
+    if not 1 <= len(requests) <= 8:
+        return {"ok": False, "error": "Request between one and eight file ranges"}
+    budget = max(1, min(maximum_chars, 80_000))
+    results = []
+    allowed = {"path", "start_line", "maximum_lines", "start_column", "maximum_chars", "expected_sha256"}
+    with WRITE_LOCK:
+        for request in requests:
+            if set(request) - allowed or not isinstance(request.get("path"), str):
+                return {"ok": False, "error": "Invalid file-range request"}
+            if any(type(request[k]) is not int for k in ("start_line", "maximum_lines", "start_column", "maximum_chars") if k in request):
+                return {"ok": False, "error": "Range sizes and cursors must be integers"}
+            if "expected_sha256" in request and not isinstance(request["expected_sha256"], str):
+                return {"ok": False, "error": "Invalid source identity"}
+            if budget <= 0:
+                results.append({"ok": False, "path": request["path"], "error": "Batch character budget exhausted; request this range separately"})
+                continue
+            options = {**request, "maximum_chars": min(budget, max(1, request.get("maximum_chars", 20_000)))}
+            result = read_tracked_file(project, ref=ref, **options)
+            results.append(result)
+            budget -= len(result.get("content", ""))
+    return {"ok": all(r.get("ok") for r in results), "results": results,
+            "partial": any(not r.get("ok") for r in results),
+            "truncated": any(r.get("truncated") or not r.get("ok") for r in results)}
 
 
 @mcp.tool()
@@ -1087,7 +1165,8 @@ def moory_capabilities() -> dict:
             "full": "Use only when evidence is truncated, ambiguous, contradictory, or insufficient.",
         },
         "rules": [
-            "Read the exact latest target range before generating a patch.",
+            "Read the exact latest target range before generating a patch; use read_tracked_files to batch ranges.",
+            "Use returned SHA-256 identities for continued reads and guarded change sets; never ignore source-changed errors.",
             "Every bounded result must disclose truncation and available escape hatches.",
             "Keep granular read tools available even when composite tools are used.",
         ],
@@ -1108,7 +1187,7 @@ def moory_tool_catalog(profile: Literal["core", "git", "github", "all"] = "core"
     """Discover compact task-oriented tool profiles without hiding the full escape hatch."""
     groups = {
         "core": ["moory_capabilities", "worker_context", "prepare_change_context", "validate_project", "apply_change_set", "commit_changes", "push_project", "inspect_ci_failure", "release_readiness"],
-        "git": ["git_status", "recent_commits", "git_diff", "list_tracked_files", "read_tracked_file", "search_tracked_code", "sync_project", "apply_unified_patch", "validate_changes"],
+        "git": ["git_status", "recent_commits", "git_diff", "list_tracked_files", "read_tracked_file", "read_tracked_files", "search_tracked_code", "sync_project", "apply_unified_patch", "validate_changes"],
         "github": ["github_health", "github_permission_diagnostics", "github_repo_summary", "github_list_issues", "github_get_issue", "github_list_pull_requests", "github_get_pull_request", "github_list_workflow_runs", "github_get_workflow_run", "github_get_actions_log", "github_list_artifacts", "github_list_releases", "github_get_release", "github_list_deployments", "github_get_deployment", "github_create_deployment", "github_create_deployment_status", "github_list_environments", "github_get_environment", "github_upsert_environment", "github_list_actions_variables", "github_upsert_actions_variable", "github_get_pages", "github_configure_pages", "github_request_pages_build"],
     }
     groups["github"].extend(["github_list_workflows", "github_get_workflow", "github_set_workflow_state", "github_list_repository_artifacts", "github_get_artifact", "github_list_commit_checks", "github_get_check_run", "github_create_check_run", "github_update_check_run", "github_list_commit_statuses", "github_create_commit_status"])
@@ -1347,7 +1426,7 @@ def validate_changes(project: ProjectName, staged: bool = False) -> dict:
 
 
 @mcp.tool()
-def validate_project(project: ProjectName) -> dict:
+def validate_project(project: ProjectName, extra_paths: list[str] = []) -> dict:
     """Run bounded static validation without executing repository code."""
     config = PROJECTS.get(project)
     if config is None:
@@ -1360,7 +1439,9 @@ def validate_project(project: ProjectName) -> dict:
     findings: list[dict[str, Any]] = []
     checked = {"python": 0, "json": 0, "toml": 0}
     skipped_large = 0
-    for relative in listed.get("output", "").splitlines()[:2000]:
+    paths = list(dict.fromkeys(listed.get("output", "").splitlines() + extra_paths))
+    incomplete = bool(listed.get("truncated")) or len(paths) > 2000
+    for relative in paths[:2000]:
         suffix = Path(relative).suffix.lower()
         if suffix not in {".py", ".json", ".toml"} or is_sensitive_path(relative):
             continue
@@ -1386,11 +1467,12 @@ def validate_project(project: ProjectName) -> dict:
             if len(findings) >= 50:
                 break
     return {
-        "ok": bool(whitespace.get("ok")) and not findings,
+        "ok": bool(whitespace.get("ok")) and not findings and not incomplete and not skipped_large,
         "checks": {"whitespace": bool(whitespace.get("ok")), "syntax": checked},
         "findings": findings,
         "skipped_large_files": skipped_large,
-        "truncated": len(findings) >= 50,
+        "truncated": len(findings) >= 50 or incomplete,
+        "complete": not incomplete and not skipped_large and len(findings) < 50,
         "execution_policy": "Repository code was parsed but not executed.",
     }
 
@@ -1611,44 +1693,64 @@ def apply_change_set(
     patch_text: str,
     check_only: bool = True,
     validation_profile: Literal["whitespace", "static"] = "static",
+    expected_head: str = "",
+    expected_sha256: dict[str, str] = {},
 ) -> dict:
-    """Preflight, apply, validate, and summarize one tracked-file change set with rollback on validation failure."""
-    if "--- /dev/null" in patch_text or "rename from " in patch_text or "copy from " in patch_text:
-        return {"ok": False, "error": "Transactional change sets currently support tracked-file edits and deletions only"}
-    preflight = apply_unified_patch(project, patch_text, check_only=True)
-    if not preflight.get("ok"):
-        return {"ok": False, "stage": "preflight", "preflight": preflight}
-    if check_only:
-        return {"ok": True, "stage": "preflight", "check_only": True, "validation_profile": validation_profile, "paths": preflight.get("paths", [])}
-    applied = apply_unified_patch(project, patch_text, check_only=False)
-    if not applied.get("ok"):
-        return {"ok": False, "stage": "apply", "preflight": preflight, "applied": applied}
-    validation = validate_project(project) if validation_profile == "static" else validate_changes(project, staged=False)
-    diff = git_diff(project, staged=False)
-    if validation.get("ok"):
-        return {
-            "ok": True,
-            "stage": "validated",
-            "paths": preflight.get("paths", []),
-            "validation": validation,
-            "diff": diff,
-        }
-    paths = list(dict.fromkeys(str(path) for path in preflight.get("paths", []) if path))
-    rollback: list[dict[str, Any]] = []
-    if paths:
-        restored = run_git(project, ["restore", "--staged", "--worktree", "--", *paths])
-        rollback.append(restored)
-    clean = run_git(project, ["status", "--porcelain"])
-    audit("apply_change_set_rollback", project, clean.get("ok") and not clean.get("output", "").strip(), validation.get("error", "validation failed"))
-    return {
-        "ok": False,
-        "stage": "validation",
-        "error": "Validation failed; tracked-file changes were rolled back.",
-        "validation": validation,
-        "rollback": rollback,
-        "clean_after_rollback": clean.get("ok") and not clean.get("output", "").strip(),
-        "diff_before_rollback": diff,
-    }
+    """Serialize SHA checks, preflight, apply, validation and rollback; support regular new files."""
+    if validation_profile not in {"whitespace", "static"}:
+        return {"ok": False, "error": "Invalid validation profile"}
+    if any(marker in patch_text for marker in ("rename from ", "copy from ", "GIT binary patch", " 120000")):
+        return {"ok": False, "error": "Transactional patches support regular text edits, additions and deletions only"}
+    with WRITE_LOCK:
+        preflight = apply_unified_patch(project, patch_text, check_only=True)
+        if not preflight.get("ok"):
+            return {"ok": False, "stage": "preflight", "preflight": preflight}
+        paths = list(dict.fromkeys(preflight.get("paths", [])))
+        root = PROJECTS[project]["path"].resolve()
+        if any(".git" in Path(path).parts or any(part.is_symlink() for part in [(root / path), *(root / path).parents] if part != root and root in part.parents) for path in paths):
+            return {"ok": False, "error": "Unsafe patch path"}
+        if expected_head:
+            head = run_git(project, ["rev-parse", "HEAD"])
+            if not head.get("ok") or head["output"].strip() != expected_head:
+                return {"ok": False, "stage": "identity", "error": "HEAD changed; refresh the change context"}
+        for path, digest in expected_sha256.items():
+            if path not in paths or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                return {"ok": False, "stage": "identity", "error": "Invalid expected file identity"}
+            candidate = root / path
+            if not candidate.is_file() or hashlib.sha256(candidate.read_bytes()).hexdigest() != digest:
+                return {"ok": False, "stage": "identity", "error": "Source changed; refresh the target range", "path": path}
+        added_paths = [path for path in paths if not (root / path).exists()]
+        tracked_paths = [path for path in paths if path not in added_paths]
+        if check_only:
+            return {"ok": True, "stage": "preflight", "check_only": True, "validation_profile": validation_profile,
+                    "paths": paths, "sha_guarded": bool(expected_head or expected_sha256)}
+        applied = apply_unified_patch(project, patch_text, check_only=False)
+        if not applied.get("ok"):
+            return {"ok": False, "stage": "apply", "applied": applied}
+        try:
+            validation = validate_project(project, extra_paths=added_paths) if validation_profile == "static" else validate_changes(project, staged=False)
+            diff = git_diff(project, staged=False)
+        except Exception as error:
+            validation = {"ok": False, "error": redact_github_text(str(error))[:500]}
+            diff = {"ok": False, "error": "Validation raised; rollback required"}
+        if validation.get("ok") and diff.get("ok"):
+            audit("apply_change_set_validated", project, True, "validation passed")
+            return {"ok": True, "stage": "validated", "paths": paths, "validation": validation,
+                    "diff": diff, "added_paths": added_paths, "sha_guarded": bool(expected_head or expected_sha256)}
+        rollback = []
+        if tracked_paths:
+            rollback.append(run_git(project, ["restore", "--worktree", "--", *tracked_paths]))
+        for path in added_paths:
+            try:
+                (root / path).unlink(missing_ok=True)
+            except OSError as error:
+                rollback.append({"ok": False, "error": redact_github_text(str(error))[:500]})
+        clean = run_git(project, ["status", "--porcelain"])
+        clean_after_rollback = bool(clean.get("ok") and not clean.get("output", "").strip() and all(r.get("ok") for r in rollback))
+        audit("apply_change_set_rollback", project, clean_after_rollback, validation.get("error", "validation failed"))
+        return {"ok": False, "stage": "validation", "error": "Validation failed; rollback attempted; check clean_after_rollback.",
+                "validation": validation, "rollback": rollback, "clean_after_rollback": clean_after_rollback,
+                "diff_before_rollback": diff}
 
 
 @mcp.tool()
@@ -2129,55 +2231,66 @@ def github_get_workflow_run(project: ProjectName, run_id: int) -> dict:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
+def _actions_log_snapshot(project: ProjectName, run_id: int, contains: str = "") -> dict:
+    run = require_positive_id(run_id, "run_id")
+    if len(contains) > 200:
+        raise ValueError("Log filter must be at most 200 characters")
+    repo = github_repo(project)
+    token, _ = github_installation_token()
+    _, raw, _ = _github_http(
+        f"/repos/{repo}/actions/runs/{run}/logs", token=token,
+        accept="application/vnd.github+json", maximum_bytes=MAX_GH_LOG_ZIP_BYTES,
+    )
+    collected = []
+    query = contains.lower().strip()
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        members = [item for item in archive.infolist() if not item.is_dir()]
+        if len(members) > 200 or sum(item.file_size for item in members) > MAX_GH_LOG_TEXT_BYTES:
+            raise ValueError("Expanded Actions logs exceed the configured size limit; no partial scan was presented as complete")
+        for member in sorted(members, key=lambda item: item.filename):
+            if member.file_size > 5_000_000:
+                raise ValueError("An Actions log file exceeds the configured size limit")
+            # Redact whole files so multiline private keys cannot leak between pages.
+            text = redact_github_text(archive.read(member).decode("utf-8", errors="replace"))
+            for line in text.splitlines():
+                if not query or query in line.lower():
+                    collected.append(f"[{redact_github_text(member.filename)}] {line}")
+    output = "\n".join(collected)
+    return {"output": output, "files_scanned": len(members), "matching_lines": len(collected),
+            "source_sha256": hashlib.sha256(output.encode("utf-8")).hexdigest()}
+
+
 @mcp.tool()
 def github_get_actions_log(
     project: ProjectName,
     run_id: int,
     tail_lines: int = 300,
     contains: str = "",
+    start_offset: int = -1,
+    maximum_chars: int = 20_000,
+    expected_sha256: str = "",
 ) -> dict:
-    """Download a bounded Actions log archive and return redacted matching or tail lines."""
+    """Read bounded redacted logs; start_offset=0 pages the full source, including very long lines."""
     try:
-        run = require_positive_id(run_id, "run_id")
-        if len(contains) > 200:
-            return {"ok": False, "error": "Log filter must be at most 200 characters"}
-        safe_lines = max(1, min(tail_lines, 500))
-        repo = github_repo(project)
-        token, _ = github_installation_token()
-        _, raw, _ = _github_http(
-            f"/repos/{repo}/actions/runs/{run}/logs",
-            token=token,
-            accept="application/vnd.github+json",
-            maximum_bytes=MAX_GH_LOG_ZIP_BYTES,
-        )
-        archive = zipfile.ZipFile(io.BytesIO(raw))
-        members = [item for item in archive.infolist() if not item.is_dir()][:200]
-        if sum(item.file_size for item in members) > MAX_GH_LOG_TEXT_BYTES:
-            return {"ok": False, "error": "Expanded Actions logs exceed the configured size limit"}
-        collected: list[str] = []
-        query = contains.lower().strip()
-        for member in members:
-            if member.file_size > 5_000_000:
-                continue
-            text = archive.read(member).decode("utf-8", errors="replace")
-            for line in text.splitlines():
-                clean = redact_github_text(line)
-                if not query or query in clean.lower():
-                    collected.append(f"[{member.filename}] {clean}")
-        selected = collected[:safe_lines] if query else collected[-safe_lines:]
-        output = "\n".join(selected)
-        if len(output) > 100_000:
-            output = output[-100_000:]
-        return {
-            "ok": True,
-            "files_scanned": len(members),
-            "matching_lines": len(collected),
-            "returned_lines": len(selected),
-            "truncated": len(collected) > len(selected) or len(output) >= 100_000,
-            "output": output,
-        }
-    except zipfile.BadZipFile:
-        return {"ok": False, "error": "GitHub returned an invalid Actions log archive"}
+        source = _actions_log_snapshot(project, run_id, contains)
+        text = source.pop("output")
+        digest = source["source_sha256"]
+        if expected_sha256 and digest != expected_sha256:
+            return {"ok": False, "error": "Log source changed; restart at offset zero", "source_sha256": digest}
+        if start_offset < -1 or start_offset > len(text):
+            return {"ok": False, "error": "Invalid log cursor"}
+        if start_offset == -1:
+            selected = "\n".join(text.splitlines()[-max(1, min(tail_lines, 500)):])
+            start = len(text) - len(selected)
+        else:
+            start = start_offset
+        output = text[start:start + max(1, min(maximum_chars, 100_000))]
+        end = start + len(output)
+        return {"ok": True, **source, "output": output, "returned_lines": len(output.splitlines()),
+                "total_characters": len(text), "start_offset": start,
+                "truncated": start > 0 or end < len(text),
+                "next_cursor": {"start_offset": end, "expected_sha256": digest} if end < len(text) else None,
+                "full_evidence_request": {"project": project, "run_id": run_id, "contains": contains, "start_offset": 0, "expected_sha256": digest}}
     except Exception as error:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
@@ -2188,53 +2301,55 @@ def inspect_ci_failure(
     run_id: int,
     detail: Literal["summary", "evidence", "full"] = "summary",
 ) -> dict:
-    """Combine a workflow run, failed steps, and bounded redacted logs; escalate detail only when needed."""
+    """Scan all bounded logs, return compact failure groups, and retain an exact full-evidence cursor."""
     if detail not in DETAIL_LEVELS:
         return {"ok": False, "error": "Invalid detail level"}
     data = github_get_workflow_run(project, run_id)
     if not data.get("ok"):
         return data
-    failed_jobs: list[dict[str, Any]] = []
+    failed_jobs = []
     for job in data.get("jobs", []):
         failed_steps = [step for step in job.get("steps", []) if step.get("conclusion") in {"failure", "timed_out", "cancelled", "action_required"}]
         if job.get("conclusion") in {"failure", "timed_out", "cancelled", "action_required"} or failed_steps:
             failed_jobs.append({"id": job.get("id"), "name": job.get("name"), "conclusion": job.get("conclusion"), "html_url": job.get("html_url"), "failed_steps": failed_steps})
-    result: dict[str, Any] = {
-        "ok": True,
-        "partial": False,
-        "detail": detail,
-        "available_detail_levels": list(DETAIL_LEVELS),
-        "workflow_run": data.get("workflow_run"),
-        "failed_jobs": failed_jobs,
-        "truncated": False,
-        "next_recommended_action": "No CI failure was detected." if (data.get("workflow_run") or {}).get("conclusion") == "success" else ("Request evidence for redacted error lines." if detail == "summary" else "Read exact source ranges implicated by the failure before patching."),
-    }
-    if detail != "summary":
-        lines = 100 if detail == "evidence" else 500
-        logs = github_get_actions_log(project, run_id, tail_lines=lines, contains="")
-        if logs.get("ok"):
-            raw_log = str(logs.get("output", ""))
-            error_pattern = re.compile(r"\b(error|failed|failure|exception|traceback|fatal|panic|timed out)\b", re.IGNORECASE)
-            groups: list[dict[str, Any]] = []
-            seen: set[str] = set()
-            raw_lines = raw_log.splitlines()
-            radius = 1 if detail == "evidence" else 2
-            for index, line in enumerate(raw_lines):
-                normalized = re.sub(r"\s+", " ", line).strip().casefold()
-                if not error_pattern.search(line) or normalized in seen:
-                    continue
-                seen.add(normalized)
-                start = max(0, index - radius)
-                end = min(len(raw_lines), index + radius + 1)
-                groups.append({"line": index + 1, "message": line[:500], "context": "\n".join(raw_lines[start:end])})
-                if len(groups) >= (20 if detail == "evidence" else 60):
-                    break
-            result["error_groups"] = groups
-            result["log_evidence"] = raw_log if detail == "full" else "\n\n".join(group["context"] for group in groups)
-            result["truncated"] = bool(logs.get("truncated"))
-        else:
-            result["partial"] = True
-            result["unavailable"] = {"logs": logs.get("error", "Log access unavailable")}
+    result = {"ok": True, "partial": False, "detail": detail, "available_detail_levels": list(DETAIL_LEVELS),
+              "workflow_run": data.get("workflow_run"), "failed_jobs": failed_jobs, "truncated": False,
+              "next_recommended_action": "Request evidence before editing; full logs are available through github_get_actions_log start_offset=0."}
+    if detail == "summary":
+        return result
+    try:
+        source = _actions_log_snapshot(project, run_id)
+        text = source.pop("output")
+        raw_lines = text.splitlines()
+        pattern = re.compile(r"\b(error|failed|failure|exception|traceback|fatal|panic|timed out)\b", re.IGNORECASE)
+        seen = set()
+        groups = []
+        total_groups = 0
+        shortened = False
+        budget = 16_000 if detail == "evidence" else 50_000
+        limit = 20 if detail == "evidence" else 60
+        for index, line in enumerate(raw_lines):
+            normalized = re.sub(r"\d{4}-\d\d-\d\dT[0-9:.]+Z", "[timestamp]", line)
+            normalized = re.sub(r"\s+", " ", normalized).strip().casefold()
+            if not pattern.search(line) or normalized in seen:
+                continue
+            seen.add(normalized)
+            total_groups += 1
+            if len(groups) >= limit or budget <= 0:
+                continue
+            context = "\n".join(raw_lines[max(0, index - 1):index + 2])
+            bounded = context[:min(1500, budget)]
+            message = line[:500]
+            shortened = shortened or len(bounded) < len(context) or len(message) < len(line)
+            groups.append({"line": index + 1, "message": message, "context": bounded,
+                           "truncated": len(bounded) < len(context) or len(message) < len(line)})
+            budget -= len(bounded) + len(message)
+        result.update({"error_groups": groups, "total_error_groups": total_groups,
+                       "groups_omitted": total_groups - len(groups), "source": source,
+                       "truncated": shortened or total_groups > len(groups),
+                       "full_evidence_request": {"project": project, "run_id": run_id, "start_offset": 0, "expected_sha256": source["source_sha256"]}})
+    except Exception as error:
+        result.update({"partial": True, "unavailable": {"logs": redact_github_text(str(error))[:500]}})
     return result
 
 
