@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Remove repetitive user-facing magic-phrase challenges: for an explicitly requested operation the agent supplies the technical marker itself. Clarify this in served MCP instructions, capabilities, tool descriptions and repository guidance; retain every operation-marker check, permission, read-only restriction, validator and audit boundary.
+
 - Mask detected credentials in ordinary file reads before pagination and in outbound text/structured data, disclose redaction, retain original-byte SHA guards, and sanitize audit details.
 - Fix stale overview maps after staged additions/deletions by fingerprinting tracked-file inventories; reject incomplete inventories and failed clean-status checks.
 - Add operator-controlled registration profiles and strict read-only enforcement, with conservative MCP behavior annotations; preserve the full legacy default.

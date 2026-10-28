@@ -308,6 +308,9 @@ class CompactMCPServer(MCPServer):
                     item["redaction_events"] += int(bool(redactions))
 
 
+OPERATION_AUTHORIZATION_GUIDANCE = 'For an operation the user has already explicitly requested, the agent fills the exact confirmation field as an internal operation marker. Do not require the user to repeat or type a magic phrase. If intent, target, scope or an irreversible consequence is unclear, ask a concise clarification. This does not authorize unrelated actions or bypass authentication, allowlists, read-only policy, validation, audit or GitHub protections.'
+
+
 mcp = CompactMCPServer(
     name="Moory",
     version="1.5.0",
@@ -317,7 +320,8 @@ mcp = CompactMCPServer(
         "worker_context detail=summary, escalate to evidence before editing, and use full only when evidence is "
         "truncated, ambiguous, contradictory, or insufficient. Read exact current file ranges before patching. "
         "Only use registered projects and approved branches. Never expose secrets, force-push, rewrite history, "
-        "delete repositories, or run arbitrary shell commands. Validate changes before commit and push."
+        "delete repositories, or run arbitrary shell commands. Validate changes before commit and push. "
+        + OPERATION_AUTHORIZATION_GUIDANCE
     ),
 )
 
@@ -1356,6 +1360,7 @@ def moory_capabilities() -> dict:
     return {
         "ok": True,
         "role": "Moory executes deterministic work; the connected agent reasons, decides, and reviews.",
+        "operation_authorization": OPERATION_AUTHORIZATION_GUIDANCE,
         "context_levels": {
             "summary": "Use first for orientation; never edit from summary alone.",
             "evidence": "Use for source lines, errors, and facts before deciding a change.",
@@ -1835,7 +1840,7 @@ def create_branch(project: ProjectName, branch: str, start_ref: str = "", confir
 
 @mcp.tool()
 def delete_branch(project: ProjectName, branch: str, remote: bool = False, confirmation: str = "") -> dict:
-    """Delete a writable branch locally and optionally on GitHub. Requires an exact confirmation."""
+    """Delete a writable branch locally and optionally on GitHub. Requires an agent-supplied operation marker for an authorized request."""
     with WRITE_LOCK:
         config = PROJECTS.get(project)
         if config is None:
@@ -2808,7 +2813,7 @@ def github_mark_pull_request_ready(
     pull_number: int,
     confirmation: str = "",
 ) -> dict:
-    """Mark a draft pull request ready for review after exact confirmation READY PR #number."""
+    """Mark a draft pull request ready for review with the agent-supplied operation marker READY PR #number."""
     try:
         number = require_positive_id(pull_number, "pull_number")
         if confirmation.strip() != f"READY PR #{number}":
@@ -2851,7 +2856,7 @@ def github_update_pull_request(
     base: str | None = None,
     confirmation: str = "",
 ) -> dict:
-    """Update a pull request. Closing requires confirmation text CLOSE PR #number."""
+    """Update a pull request. For an authorized close, the agent supplies CLOSE PR #number; do not ask the user to repeat it."""
     try:
         number = require_positive_id(pull_number, "pull_number")
         payload: dict[str, Any] = {}
@@ -2944,7 +2949,7 @@ def github_submit_pull_request_review(
     body: str,
     confirmation: str,
 ) -> dict:
-    """Submit a PR review after exact confirmation REVIEW PR #number."""
+    """Submit a PR review with the agent-supplied operation marker REVIEW PR #number."""
     try:
         number = require_positive_id(pull_number, "pull_number")
         if confirmation.strip() != f"REVIEW PR #{number}":
@@ -2970,7 +2975,7 @@ def github_merge_pull_request(
     commit_message: str = "",
     confirmation: str = "",
 ) -> dict:
-    """Merge a PR only after exact confirmation MERGE PR #number."""
+    """Merge an explicitly requested PR; the agent supplies MERGE PR #number, not the user."""
     try:
         number = require_positive_id(pull_number, "pull_number")
         if confirmation.strip() != f"MERGE PR #{number}":
@@ -2999,7 +3004,7 @@ def github_rerun_workflow(
     failed_jobs_only: bool = True,
     confirmation: str = "",
 ) -> dict:
-    """Rerun failed jobs or a whole workflow after exact confirmation RERUN RUN id."""
+    """Rerun failed jobs or a whole workflow with the agent-supplied operation marker RERUN RUN id."""
     try:
         run = require_positive_id(run_id, "run_id")
         if confirmation.strip() != f"RERUN RUN {run}":
@@ -3018,7 +3023,7 @@ def github_rerun_workflow(
 
 @mcp.tool()
 def github_cancel_workflow(project: ProjectName, run_id: int, confirmation: str = "") -> dict:
-    """Cancel a queued or running workflow after exact confirmation CANCEL RUN id."""
+    """Cancel a queued or running workflow with the agent-supplied operation marker CANCEL RUN id."""
     try:
         run = require_positive_id(run_id, "run_id")
         if confirmation.strip() != f"CANCEL RUN {run}":
@@ -3042,7 +3047,7 @@ def github_dispatch_workflow(
     inputs: dict[str, str] = {},
     confirmation: str = "",
 ) -> dict:
-    """Dispatch an allowlisted workflow file after exact confirmation DISPATCH workflow ON ref."""
+    """Dispatch an allowlisted workflow file with the agent-supplied operation marker DISPATCH workflow ON ref."""
     try:
         clean_workflow = workflow.strip()
         if not re.fullmatch(r"[A-Za-z0-9._\-]+\.(?:yml|yaml)", clean_workflow):
@@ -3083,7 +3088,7 @@ def github_create_release(
     publish: bool = False,
     confirmation: str = "",
 ) -> dict:
-    """Create a draft release by default. Publishing requires confirmation PUBLISH tag."""
+    """Create a draft release by default. For an authorized publication, the agent supplies PUBLISH tag."""
     try:
         tag = validate_tag(tag_name)
         clean_name = validate_title(name, "release name")
@@ -3116,7 +3121,7 @@ def github_update_release(
     publish: bool | None = None,
     confirmation: str = "",
 ) -> dict:
-    """Update a release. Publishing a draft requires confirmation PUBLISH RELEASE id."""
+    """Update a release. For an authorized publication, the agent supplies PUBLISH RELEASE id."""
     try:
         release = require_positive_id(release_id, "release_id")
         current = github_json(project, f"/releases/{release}")
@@ -3199,7 +3204,7 @@ def github_get_deployment(project: ProjectName, deployment_id: int) -> dict:
 
 @mcp.tool()
 def github_create_deployment(project: ProjectName, ref: str, environment: str = "production", task: str = "deploy", description: str = "", transient_environment: bool = False, production_environment: bool = False, confirmation: str = "") -> dict:
-    """Create a deployment after exact confirmation DEPLOY ref TO environment."""
+    """Create a deployment with the agent-supplied operation marker DEPLOY ref TO environment."""
     try:
         clean_ref = validate_ref(ref, "deployment ref")
         clean_environment = validate_environment_name(environment)
@@ -3223,7 +3228,7 @@ def github_create_deployment(project: ProjectName, ref: str, environment: str = 
 
 @mcp.tool()
 def github_create_deployment_status(project: ProjectName, deployment_id: int, state: Literal["error", "failure", "inactive", "in_progress", "queued", "pending", "success"], description: str = "", environment: str = "", log_url: str = "", environment_url: str = "", auto_inactive: bool = True, confirmation: str = "") -> dict:
-    """Create a deployment status after exact confirmation SET DEPLOYMENT id state."""
+    """Create a deployment status with the agent-supplied operation marker SET DEPLOYMENT id state."""
     try:
         deployment = require_positive_id(deployment_id, "deployment_id")
         if confirmation.strip() != f"SET DEPLOYMENT {deployment} {state}":
@@ -3270,7 +3275,7 @@ def github_get_environment(project: ProjectName, environment: str) -> dict:
 
 @mcp.tool()
 def github_upsert_environment(project: ProjectName, environment: str, wait_timer: int = 0, prevent_self_review: bool = False, reviewer_user_ids: list[int] = [], reviewer_team_ids: list[int] = [], branch_policy: Literal["all", "protected", "custom"] = "all", confirmation: str = "") -> dict:
-    """Create or update an environment after exact confirmation CONFIGURE ENVIRONMENT name."""
+    """Create or update an environment with the agent-supplied operation marker CONFIGURE ENVIRONMENT name."""
     try:
         name = validate_environment_name(environment)
         if not isinstance(wait_timer, int) or isinstance(wait_timer, bool) or not 0 <= wait_timer <= 43_200:
@@ -3322,7 +3327,7 @@ def github_list_actions_variables(project: ProjectName, scope: Literal["reposito
 
 @mcp.tool()
 def github_upsert_actions_variable(project: ProjectName, name: str, value: str, scope: Literal["repository", "environment"] = "repository", environment: str = "", confirmation: str = "") -> dict:
-    """Create or update a non-secret Actions variable after exact confirmation."""
+    """Create or update a non-secret Actions variable with the agent-supplied operation marker."""
     try:
         if scope not in {"repository", "environment"}:
             return {"ok": False, "error": "Invalid variable scope"}
@@ -3376,7 +3381,7 @@ def github_get_pages(project: ProjectName, limit: int = 20, page: int = 1) -> di
 
 @mcp.tool()
 def github_configure_pages(project: ProjectName, operation: Literal["create", "update"], build_type: Literal["legacy", "workflow"], branch: str = "", source_path: Literal["/", "/docs"] = "/", https_enforced: bool | None = None, confirmation: str = "") -> dict:
-    """Create or update GitHub Pages after exact confirmation."""
+    """Create or update GitHub Pages with the agent-supplied operation marker."""
     try:
         if operation not in {"create", "update"} or build_type not in {"legacy", "workflow"}:
             return {"ok": False, "error": "Invalid Pages operation or build type"}
@@ -3407,7 +3412,7 @@ def github_configure_pages(project: ProjectName, operation: Literal["create", "u
 
 @mcp.tool()
 def github_request_pages_build(project: ProjectName, confirmation: str = "") -> dict:
-    """Request a Pages build after exact confirmation BUILD PAGES."""
+    """Request a Pages build with the agent-supplied operation marker BUILD PAGES."""
     try:
         if confirmation.strip() != "BUILD PAGES":
             return {"ok": False, "error": "Pages build requires confirmation: BUILD PAGES"}
@@ -3449,7 +3454,7 @@ def github_get_workflow(project: ProjectName, workflow: str) -> dict:
 
 @mcp.tool()
 def github_set_workflow_state(project: ProjectName, workflow: str, action: Literal["enable", "disable"], confirmation: str = "") -> dict:
-    """Enable or disable a workflow after exact confirmation."""
+    """Enable or disable a workflow with the agent-supplied operation marker."""
     try:
         clean_workflow = str(workflow).strip()
         if not re.fullmatch(r"(?:[1-9][0-9]{0,18}|[A-Za-z0-9._\-]+\.(?:yml|yaml))", clean_workflow):
@@ -3496,7 +3501,7 @@ def github_get_check_run(project: ProjectName, check_run_id: int) -> dict:
 
 @mcp.tool()
 def github_create_check_run(project: ProjectName, name: str, head_sha: str, status: Literal["queued", "in_progress", "completed"] = "queued", conclusion: Literal["action_required", "cancelled", "failure", "neutral", "success", "skipped", "stale", "timed_out"] | None = None, details_url: str = "", external_id: str = "", title: str = "", summary: str = "", text: str = "", confirmation: str = "") -> dict:
-    """Create a check run after exact confirmation."""
+    """Create a check run with the agent-supplied operation marker."""
     try:
         clean_name = validate_title(name, "check name")
         clean_sha = head_sha.strip().lower()
@@ -3526,7 +3531,7 @@ def github_create_check_run(project: ProjectName, name: str, head_sha: str, stat
 
 @mcp.tool()
 def github_update_check_run(project: ProjectName, check_run_id: int, status: Literal["queued", "in_progress", "completed"], conclusion: Literal["action_required", "cancelled", "failure", "neutral", "success", "skipped", "stale", "timed_out"] | None = None, details_url: str = "", title: str = "", summary: str = "", text: str = "", confirmation: str = "") -> dict:
-    """Update a check run after exact confirmation."""
+    """Update a check run with the agent-supplied operation marker."""
     try:
         check = require_positive_id(check_run_id, "check_run_id")
         if status not in {"queued", "in_progress", "completed"}:
@@ -3572,7 +3577,7 @@ def github_list_commit_statuses(project: ProjectName, ref: str, limit: int = 50,
 
 @mcp.tool()
 def github_create_commit_status(project: ProjectName, sha: str, state: Literal["error", "failure", "pending", "success"], context: str = "default", description: str = "", target_url: str = "", confirmation: str = "") -> dict:
-    """Create a commit status after exact confirmation."""
+    """Create a commit status with the agent-supplied operation marker."""
     try:
         clean_sha = sha.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{40}", clean_sha):
@@ -3664,7 +3669,7 @@ def github_list_secret_scanning_locations(project: ProjectName, alert_number: in
 
 @mcp.tool()
 def github_update_secret_scanning_alert(project: ProjectName, alert_number: int, state: Literal["open", "resolved"], resolution: Literal["false_positive", "wont_fix", "revoked", "used_in_tests"] | None = None, resolution_comment: str = "", confirmation: str = "") -> dict:
-    """Resolve or reopen a secret scanning alert after exact confirmation."""
+    """Resolve or reopen a secret scanning alert with the agent-supplied operation marker."""
     try:
         number = require_positive_id(alert_number, "alert_number")
         if state == "resolved" and resolution is None:
@@ -3715,7 +3720,7 @@ def github_get_code_scanning_alert(project: ProjectName, alert_number: int) -> d
 
 @mcp.tool()
 def github_update_code_scanning_alert(project: ProjectName, alert_number: int, state: Literal["open", "dismissed"], dismissed_reason: Literal["false positive", "won't fix", "used in tests"] | None = None, dismissed_comment: str = "", confirmation: str = "") -> dict:
-    """Dismiss or reopen a code scanning alert after exact confirmation."""
+    """Dismiss or reopen a code scanning alert with the agent-supplied operation marker."""
     try:
         number = require_positive_id(alert_number, "alert_number")
         if state == "dismissed" and dismissed_reason is None:
@@ -3831,7 +3836,7 @@ def github_get_repository_security_advisory(project: ProjectName, ghsa_id: str) 
 
 @mcp.tool()
 def github_create_repository_security_advisory(project: ProjectName, summary: str, description: str, severity: Literal["low", "medium", "high", "critical"], ecosystem: Literal["rubygems", "npm", "pip", "maven", "nuget", "composer", "go", "rust", "erlang", "actions", "pub", "other", "swift"], package_name: str, vulnerable_version_range: str, patched_versions: str = "", cwe_ids: list[str] = [], confirmation: str = "") -> dict:
-    """Create a draft repository security advisory after exact confirmation."""
+    """Create a draft repository security advisory with the agent-supplied operation marker."""
     try:
         clean_summary = validate_title(summary, "advisory summary")
         clean_description = validate_body(description, 60_000)
@@ -3861,7 +3866,7 @@ def github_create_repository_security_advisory(project: ProjectName, summary: st
 
 @mcp.tool()
 def github_update_repository_security_advisory(project: ProjectName, ghsa_id: str, summary: str | None = None, description: str | None = None, severity: Literal["low", "medium", "high", "critical"] | None = None, state: Literal["draft", "published", "closed"] | None = None, confirmation: str = "") -> dict:
-    """Update or publish a repository security advisory after exact confirmation."""
+    """Update or publish a repository security advisory with the agent-supplied operation marker."""
     try:
         ghsa = ghsa_id.strip().upper()
         if not re.fullmatch(r"GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}", ghsa):
@@ -3939,7 +3944,7 @@ def github_list_package_versions(project: ProjectName, package_type: Literal["np
 
 @mcp.tool()
 def github_create_attestation(project: ProjectName, bundle: dict[str, Any], confirmation: str = "") -> dict:
-    """Store a Sigstore attestation bundle after exact confirmation."""
+    """Store a Sigstore attestation bundle with the agent-supplied operation marker."""
     try:
         encoded = json.dumps(bundle, separators=(",", ":"))
         if len(encoded) > 2_000_000 or not isinstance(bundle.get("mediaType"), str) or not isinstance(bundle.get("verificationMaterial"), dict) or not isinstance(bundle.get("dsseEnvelope"), dict):
@@ -3954,7 +3959,7 @@ def github_create_attestation(project: ProjectName, bundle: dict[str, Any], conf
 
 @mcp.tool()
 def github_submit_dependency_snapshot(project: ProjectName, snapshot: dict[str, Any], confirmation: str = "") -> dict:
-    """Submit a dependency graph snapshot after exact confirmation."""
+    """Submit a dependency graph snapshot with the agent-supplied operation marker."""
     try:
         encoded = json.dumps(snapshot, separators=(",", ":")); required = {"version", "job", "sha", "ref", "detector", "manifests"}
         if len(encoded) > 5_000_000 or not required.issubset(snapshot) or redact_github_text(encoded) != encoded:
@@ -3980,7 +3985,7 @@ def github_list_artifact_metadata(project: ProjectName, subject_digest: str) -> 
 
 @mcp.tool()
 def github_create_artifact_storage_record(project: ProjectName, name: str, subject_digest: str, registry_url: str, artifact_url: str = "", version: str = "", repository: str = "", status: Literal["active", "eol", "deleted"] = "active", confirmation: str = "") -> dict:
-    """Create an organization artifact storage record after exact confirmation."""
+    """Create an organization artifact storage record with the agent-supplied operation marker."""
     try:
         digest = validate_digest(subject_digest); clean_name = validate_title(name, "artifact name")
         required = f"STORE ARTIFACT {clean_name}"
@@ -3997,7 +4002,7 @@ def github_create_artifact_storage_record(project: ProjectName, name: str, subje
 
 @mcp.tool()
 def github_create_artifact_deployment_record(project: ProjectName, name: str, subject_digest: str, logical_environment: str, deployment_name: str, status: Literal["deployed", "decommissioned"] = "deployed", physical_environment: str = "", cluster: str = "", version: str = "", runtime_risks: list[Literal["critical-resource", "internet-exposed", "lateral-movement", "sensitive-data"]] = [], confirmation: str = "") -> dict:
-    """Create or update an artifact deployment record after exact confirmation."""
+    """Create or update an artifact deployment record with the agent-supplied operation marker."""
     try:
         digest = validate_digest(subject_digest); clean_name = validate_title(name, "artifact name")
         required = f"DEPLOY ARTIFACT {clean_name} TO {logical_environment.strip()}"
@@ -4026,7 +4031,7 @@ def github_list_labels(project: ProjectName, limit: int = 50, page: int = 1) -> 
 
 @mcp.tool()
 def github_upsert_label(project: ProjectName, name: str, color: str, description: str = "", new_name: str = "", confirmation: str = "") -> dict:
-    """Create or update a label after exact confirmation."""
+    """Create or update a label with the agent-supplied operation marker."""
     try:
         clean_name = validate_title(name, "label name"); clean_color = color.strip().lstrip("#").lower()
         if not re.fullmatch(r"[0-9a-f]{6}", clean_color): return {"ok": False, "error": "Label color must be six hexadecimal characters"}
@@ -4055,7 +4060,7 @@ def github_list_milestones(project: ProjectName, state: Literal["open", "closed"
 
 @mcp.tool()
 def github_upsert_milestone(project: ProjectName, title: str, milestone_number: int = 0, state: Literal["open", "closed"] = "open", description: str = "", due_on: str = "", confirmation: str = "") -> dict:
-    """Create or update a milestone after exact confirmation."""
+    """Create or update a milestone with the agent-supplied operation marker."""
     try:
         clean_title = validate_title(title, "milestone title"); required = f"UPSERT MILESTONE {clean_title}"
         if confirmation.strip() != required: return {"ok": False, "error": f"Milestone change requires confirmation: {required}"}
@@ -4084,7 +4089,7 @@ def github_get_requested_reviewers(project: ProjectName, pull_number: int) -> di
 
 @mcp.tool()
 def github_request_pull_request_reviewers(project: ProjectName, pull_number: int, reviewers: list[str] = [], team_reviewers: list[str] = [], confirmation: str = "") -> dict:
-    """Request pull request reviewers after exact confirmation."""
+    """Request pull request reviewers with the agent-supplied operation marker."""
     try:
         number = require_positive_id(pull_number, "pull number")
         clean_users = list(dict.fromkeys(validate_title(item, "reviewer") for item in reviewers))[:15]
@@ -4100,7 +4105,7 @@ def github_request_pull_request_reviewers(project: ProjectName, pull_number: int
 
 @mcp.tool()
 def github_add_issue_assignees(project: ProjectName, issue_number: int, assignees: list[str], confirmation: str = "") -> dict:
-    """Add issue or pull request assignees after exact confirmation."""
+    """Add issue or pull request assignees with the agent-supplied operation marker."""
     try:
         number = require_positive_id(issue_number, "issue number"); clean = list(dict.fromkeys(validate_title(item, "assignee") for item in assignees))[:10]
         if not clean: return {"ok": False, "error": "At least one assignee is required"}
@@ -4142,7 +4147,7 @@ def github_get_discussion(project: ProjectName, discussion_number: int, comment_
 
 @mcp.tool()
 def github_create_discussion(project: ProjectName, category_id: str, title: str, body: str, confirmation: str = "") -> dict:
-    """Create a repository discussion after exact confirmation."""
+    """Create a repository discussion with the agent-supplied operation marker."""
     try:
         clean_title = validate_title(title, "discussion title"); clean_body = validate_body(body, 60000, "discussion body")
         required = f"CREATE DISCUSSION {clean_title}"
@@ -4158,7 +4163,7 @@ def github_create_discussion(project: ProjectName, category_id: str, title: str,
 
 @mcp.tool()
 def github_comment_discussion(project: ProjectName, discussion_id: str, body: str, reply_to_id: str = "", confirmation: str = "") -> dict:
-    """Add a discussion comment or reply after exact confirmation."""
+    """Add a discussion comment or reply with the agent-supplied operation marker."""
     try:
         clean_body = validate_body(body, 60000, "comment body"); clean_id = validate_title(discussion_id, "discussion id")
         required = f"COMMENT DISCUSSION {clean_id}"
@@ -4185,7 +4190,7 @@ def github_get_pull_request_queue_state(project: ProjectName, pull_number: int) 
 
 @mcp.tool()
 def github_set_pull_request_queue_state(project: ProjectName, pull_number: int, action: Literal["enqueue", "dequeue"], confirmation: str = "") -> dict:
-    """Add or remove a pull request from the merge queue after exact confirmation."""
+    """Add or remove a pull request from the merge queue with the agent-supplied operation marker."""
     try:
         owner, repo = github_repo(project).split("/", 1); number = require_positive_id(pull_number, "pull number")
         required = f"{action.upper()} PR #{number}"
@@ -4202,7 +4207,7 @@ def github_set_pull_request_queue_state(project: ProjectName, pull_number: int, 
 
 @mcp.tool()
 def github_update_discussion(project: ProjectName, discussion_id: str, title: str | None = None, body: str | None = None, category_id: str | None = None, confirmation: str = "") -> dict:
-    """Update a discussion after exact confirmation."""
+    """Update a discussion with the agent-supplied operation marker."""
     try:
         clean_id = validate_title(discussion_id, "discussion id")
         if title is None and body is None and category_id is None: return {"ok": False, "error": "At least one discussion change is required"}
@@ -4229,7 +4234,7 @@ def github_get_repository_settings(project: ProjectName) -> dict:
 
 @mcp.tool()
 def github_update_repository_settings(project: ProjectName, name: str | None = None, description: str | None = None, homepage: str | None = None, has_issues: bool | None = None, has_projects: bool | None = None, has_wiki: bool | None = None, has_discussions: bool | None = None, allow_squash_merge: bool | None = None, allow_merge_commit: bool | None = None, allow_rebase_merge: bool | None = None, allow_auto_merge: bool | None = None, delete_branch_on_merge: bool | None = None, web_commit_signoff_required: bool | None = None, confirmation: str = "") -> dict:
-    """Update non-destructive repository settings after exact confirmation."""
+    """Update non-destructive repository settings with the agent-supplied operation marker."""
     try:
         payload: dict[str, Any] = {}
         if name is not None:
@@ -4263,7 +4268,7 @@ def github_list_collaborators(project: ProjectName, affiliation: Literal["outsid
 
 @mcp.tool()
 def github_upsert_collaborator(project: ProjectName, username: str, permission: Literal["pull", "triage", "push", "maintain", "admin"] = "pull", confirmation: str = "") -> dict:
-    """Invite or update a collaborator after exact confirmation."""
+    """Invite or update a collaborator with the agent-supplied operation marker."""
     try:
         clean = validate_title(username, "username")
         if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})", clean): return {"ok": False, "error": "Invalid GitHub username"}
@@ -4313,7 +4318,7 @@ def github_get_ruleset(project: ProjectName, ruleset_id: int, include_parents: b
 
 @mcp.tool()
 def github_upsert_ruleset(project: ProjectName, name: str, target: Literal["branch", "tag", "push"], enforcement: Literal["disabled", "active", "evaluate"], conditions: dict[str, Any], rules: list[dict[str, Any]], bypass_actors: list[dict[str, Any]] = [], ruleset_id: int = 0, confirmation: str = "") -> dict:
-    """Create or update a repository ruleset after exact confirmation."""
+    """Create or update a repository ruleset with the agent-supplied operation marker."""
     try:
         clean_name = validate_title(name, "ruleset name")
         if len(rules) > 100 or len(bypass_actors) > 100: return {"ok": False, "error": "Ruleset lists are too large"}
@@ -4347,7 +4352,7 @@ def github_get_custom_property_values(project: ProjectName) -> dict:
 
 @mcp.tool()
 def github_update_custom_property_values(project: ProjectName, properties: list[dict[str, Any]], confirmation: str = "") -> dict:
-    """Set or unset repository custom property values after exact confirmation."""
+    """Set or unset repository custom property values with the agent-supplied operation marker."""
     try:
         if not properties or len(properties) > 100: return {"ok": False, "error": "Provide 1 through 100 custom properties"}
         normalized: list[dict[str, Any]] = []

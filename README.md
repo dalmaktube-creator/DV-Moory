@@ -78,7 +78,7 @@ Known platform limits:
 - Registered repository and branch allowlist
 - No arbitrary shell or raw GitHub API endpoint
 - No force-push, history rewrite or repository deletion
-- Confirmation gates for merge, review, workflow mutations and release publication
+- Agent-supplied operation markers for merge, review, workflow mutations and release publication. Once the user has explicitly requested an operation, the agent fills `confirmation` internally; the user need not repeat a magic phrase. Ambiguous intent/target/scope still requires clarification, and all technical safeguards remain enforced.
 - Secret detection before writes
 - Short-lived GitHub App tokens in Hardened Mode
 - Dedicated SSH deploy key per repository
