@@ -39,6 +39,18 @@ Moory keeps reasoning with the connected agent and moves deterministic repositor
 
 The original granular read tools remain available, so agents can always inspect exact files and line ranges when compact context is insufficient.
 
+### Exact evidence and transactional changes
+
+- `read_tracked_files` batches up to eight ranges with a shared character budget; failed or budget-exhausted ranges are explicit. Each successful range includes `sha256`, `truncated` and a `next_cursor`.
+- `read_tracked_file` preserves UTF-8 content **including original line terminators**. Follow `next_cursor` with `expected_sha256`; content changes fail closed. Line/column cursors also resume within unusually long lines. Historical reads additionally return the commit and blob SHA.
+- Pass `expected_head` and/or per-file `expected_sha256` to `apply_change_set`. Identity verification, preflight, application, validation and rollback share the same write lock. Regular text additions are supported and validated before success; renames, copies, binary patches and symlinks are not supported by this transactional tool.
+- These SHA guards detect stale context, not independent processes writing outside Moory. Coordinate external Git/file writes separately. Legacy callers may omit the optional guards; the result explicitly reports whether guards were supplied.
+- `inspect_ci_failure detail=evidence` scans the entire bounded archive but only returns bounded failure groups. `truncated` and `groups_omitted` disclose shortened evidence. Use its `full_evidence_request` with `github_get_actions_log`, then follow `next_cursor` to recover every character of the redacted source. A changed log SHA requires restarting rather than mixing snapshots.
+- For log pagination use `start_offset=0`; the legacy default still requests a tail. Limits on archive members or expansion cause an explicit error, not a silently incomplete scan. Pagination currently re-downloads the archive; it is not a persistent snapshot store and expired GitHub logs remain unavailable.
+- Compact MCP serialization removes JSON indentation only. It preserves values and structured output; it does not control client-side wrappers or promise a fixed token saving.
+- Static validation parses code; it is **not** execution of the test suite. Real regressions run through `./scripts/test.sh` and GitHub CI. No arbitrary remote shell or implicit workflow dispatch is introduced; existing workflow confirmation gates remain unchanged.
+
+
 ## GitHub coverage
 
 Moory exposes curated tools for repository content, issues, pull requests, reviews, Actions runs, workflows, checks, commit statuses, artifacts, releases, deployments, environments, Actions variables, Pages, security alerts, advisories, supply-chain metadata, labels, milestones, discussions, merge queues, collaborators, rulesets and custom properties.
