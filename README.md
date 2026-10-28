@@ -42,7 +42,7 @@ The original granular read tools remain available, so agents can always inspect 
 ### Exact evidence and transactional changes
 
 - `read_tracked_files` batches up to eight ranges with a shared character budget; failed or budget-exhausted ranges are explicit. Each successful range includes `sha256`, `truncated` and a `next_cursor`.
-- `read_tracked_file` preserves UTF-8 content **including original line terminators**. Follow `next_cursor` with `expected_sha256`; content changes fail closed. Line/column cursors also resume within unusually long lines. Historical reads additionally return the commit and blob SHA.
+- `read_tracked_file` preserves UTF-8 content **including original line terminators**, except detected credentials, which are explicitly masked without shifting character offsets. Follow `next_cursor` with `expected_sha256`; content changes fail closed. Line/column cursors also resume within unusually long lines. Historical reads additionally return the commit and blob SHA.
 - Pass `expected_head` and/or per-file `expected_sha256` to `apply_change_set`. Identity verification, preflight, application, validation and rollback share the same write lock. Regular text additions are supported and validated before success; renames, copies, binary patches and symlinks are not supported by this transactional tool.
 - These SHA guards detect stale context, not independent processes writing outside Moory. Coordinate external Git/file writes separately. Legacy callers may omit the optional guards; the result explicitly reports whether guards were supplied.
 - `inspect_ci_failure detail=evidence` scans the entire bounded archive but only returns bounded failure groups. `truncated` and `groups_omitted` disclose shortened evidence. Use its `full_evidence_request` with `github_get_actions_log`, then follow `next_cursor` to recover every character of the redacted source. A changed log SHA requires restarting rather than mixing snapshots.
@@ -50,6 +50,17 @@ The original granular read tools remain available, so agents can always inspect 
 - Compact MCP serialization removes JSON indentation only. It preserves values and structured output; it does not control client-side wrappers or promise a fixed token saving.
 - Static validation parses code; it is **not** execution of the test suite. Real regressions run through `./scripts/test.sh` and GitHub CI. No arbitrary remote shell or implicit workflow dispatch is introduced; existing workflow confirmation gates remain unchanged.
 
+
+## Research-derived safety and navigation
+
+- Known credentials are masked before file pagination and at the outbound text/structured-output boundary; redaction is explicit and original-byte SHA guards are retained.
+- Tracked-file overview caches also fingerprint the index inventory, so staged additions/deletions do not leave a stale map.
+- Optional operator settings `MOORY_TOOL_PROFILE=core|research|github|all` and `MOORY_READ_ONLY=1` filter actual registered tools; the default remains `all` for compatibility.
+- `code_outline` provides read-only, SHA-guarded Python AST navigation without executing code or substituting a skeleton for edit evidence.
+- Completed CI snapshots use a bounded in-memory cache with live authorization checks and backend-credential/run-revision partitioning.
+- `server_diagnostics` reports build/schema identities and aggregate timing/byte/HTTP counters without payloads.
+
+See [research-derived improvements](docs/RESEARCH-IMPROVEMENTS.md) for limits, policy configuration, security caveats and validation.
 
 ## GitHub coverage
 
@@ -67,7 +78,7 @@ Known platform limits:
 - Registered repository and branch allowlist
 - No arbitrary shell or raw GitHub API endpoint
 - No force-push, history rewrite or repository deletion
-- Confirmation gates for merge, review, workflow mutations and release publication
+- Agent-supplied operation markers for merge, review, workflow mutations and release publication. Once the user has explicitly requested an operation, the agent fills `confirmation` internally; the user need not repeat a magic phrase. Ambiguous intent/target/scope still requires clarification, and all technical safeguards remain enforced.
 - Secret detection before writes
 - Short-lived GitHub App tokens in Hardened Mode
 - Dedicated SSH deploy key per repository
