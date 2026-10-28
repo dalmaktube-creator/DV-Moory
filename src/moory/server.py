@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+from collections import OrderedDict
+import importlib.metadata
 import hashlib
 import io
 import json
@@ -22,7 +24,7 @@ from typing import Any, Literal
 
 import jwt
 from mcp.server import MCPServer
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 ProjectName = str
 
@@ -80,7 +82,7 @@ WRITE_LOCK = threading.RLock()
 TOKEN_LOCK = threading.Lock()
 CONTEXT_CACHE_LOCK = threading.Lock()
 GH_TOKEN_CACHE: dict[str, Any] = {"token": "", "expires_epoch": 0, "expires_at": "", "permissions": {}, "repository_selection": "", "auth_mode": ""}
-CONTEXT_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+CONTEXT_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 MAX_CONTEXT_CACHE_ENTRIES = 64
 DETAIL_LEVELS = ("summary", "evidence", "full")
 MAX_PATCH_BYTES = 500_000
@@ -122,27 +124,188 @@ GIT_SECRET_PATTERN = (
     r"|npm_[A-Za-z0-9]{36}"
 )
 
+# Configuration is operator-controlled, not a mutable tool argument.
+TOOL_PROFILE = os.environ.get("MOORY_TOOL_PROFILE", "all").strip().lower()
+if TOOL_PROFILE not in {"all", "core", "research", "github"}:
+    raise ValueError("MOORY_TOOL_PROFILE must be all, core, research or github")
+READ_ONLY_TEXT = os.environ.get("MOORY_READ_ONLY", "0").strip().lower()
+if READ_ONLY_TEXT not in {"0", "1", "true", "false"}:
+    raise ValueError("MOORY_READ_ONLY must be 0, 1, true or false")
+READ_ONLY = READ_ONLY_TEXT in {"1", "true"}
+LOCAL_READ_TOOLS = frozenset({
+    "list_projects", "git_status", "list_branches", "recent_commits", "git_diff",
+    "list_tracked_files", "read_tracked_file", "read_tracked_files", "search_tracked_code",
+    "moory_capabilities", "moory_tool_catalog", "worker_context", "prepare_change_context",
+    "worker_benchmark", "validate_changes", "validate_project", "release_readiness",
+    "inspect_ci_failure", "code_outline", "server_diagnostics",
+})
+CORE_TOOLS = LOCAL_READ_TOOLS | frozenset({
+    "sync_project", "checkout_branch", "create_branch", "apply_change_set",
+    "apply_unified_patch", "commit_changes", "push_project", "github_health",
+    "github_get_actions_log", "github_get_workflow_run", "github_list_workflow_runs",
+    "github_get_pull_request", "github_create_pull_request",
+})
+LOG_SNAPSHOT_CACHE: OrderedDict[tuple, dict[str, Any]] = OrderedDict()
+LOG_CACHE_LOCK = threading.Lock()
+LOG_CACHE_TTL = 120
+LOG_CACHE_MAX_BYTES = 8_000_000
+LOG_CACHE_ENTRY_MAX_BYTES = 2_000_000
+LOG_CACHE_MAX_ENTRIES = 4
+METRICS_LOCK = threading.Lock()
+TOOL_METRICS: dict[str, dict[str, Any]] = {}
+HTTP_METRICS = {"calls": 0, "errors": 0, "response_bytes": 0, "duration_ms_total": 0.0}
+BOOT_MONOTONIC = time.monotonic()
+
+# Known-pattern detection is conservative, not a guarantee of detecting every secret.
+EVIDENCE_SECRET_PATTERNS = [
+    (re.compile(r"-----BEGIN (?:OPENSSH |RSA |EC )?PRIVATE KEY-----.*?(?:-----END (?:OPENSSH |RSA |EC )?PRIVATE KEY-----|$)", re.DOTALL), 0),
+    (re.compile(SECRET_PATTERN, re.IGNORECASE), 0),
+    (re.compile(r"(?i)(\b(?:MOORY_TOKEN|GITHUB_TOKEN|api_key|access_token|client_secret|password)\b[\"']?\s*[:=]\s*)([\"'])([^\r\n]+?)\2"), 3),
+    (re.compile(r"(?i)(\bauthorization\s*:\s*(?:bearer|token)\s+)([^\s\"']+)"), 2),
+    (re.compile(r"(?i)(\b(?:MOORY_TOKEN|GITHUB_TOKEN|api_key|access_token|client_secret|password)\b[\"']?\s*[:=]\s*[\"']?)([^\s\"'`,;<>]{12,})"), 2),
+]
+
+
+def _mask_sensitive_text(text: str) -> tuple[str, list[dict[str, int]]]:
+    """Mask whole-source spans before pagination, preserving character/line positions."""
+    spans = []
+    for pattern, group in EVIDENCE_SECRET_PATTERNS:
+        for match in pattern.finditer(text):
+            spans.append(match.span(group))
+    merged: list[list[int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    chunks = []
+    position = 0
+    for start, end in merged:
+        chunks.append(text[position:start])
+        chunks.append("".join(char if char in "\r\n" else "*" for char in text[start:end]))
+        position = end
+    chunks.append(text[position:])
+    return "".join(chunks), [{"start": start, "end": end} for start, end in merged]
+
+
+def _safe_payload(value: Any) -> tuple[Any, int]:
+    if isinstance(value, str):
+        clean, spans = _mask_sensitive_text(value)
+        return clean, len(spans)
+    if isinstance(value, list):
+        cleaned = [_safe_payload(item) for item in value]
+        return [item[0] for item in cleaned], sum(item[1] for item in cleaned)
+    if isinstance(value, dict):
+        result = {}
+        total = 0
+        for key, item in value.items():
+            if isinstance(key, str) and _mask_sensitive_text(key)[1]:
+                # Do not collapse two secret-bearing keys into one masked key.
+                raise ValueError("Sensitive output key blocked; no raw payload returned")
+            if isinstance(key, str) and key.casefold() in {"password", "passwd", "token", "api_key", "access_token", "refresh_token", "client_secret", "private_key", "secret", "authorization", "moory_token", "github_token"} and isinstance(item, str) and item:
+                clean = "".join(char if char in "\r\n" else "*" for char in item)
+                count = 1
+            else:
+                clean, count = _safe_payload(item)
+            result[key] = clean
+            total += count
+        return result, total
+    return value, 0
+
+
+def _is_read_tool(name: str) -> bool:
+    return name in LOCAL_READ_TOOLS or name in {"github_health", "github_permission_diagnostics", "github_repo_summary"} or name.startswith(("github_get_", "github_list_"))
+
+
+def _tool_exposed(name: str) -> bool:
+    if READ_ONLY and not _is_read_tool(name):
+        return False
+    if TOOL_PROFILE == "all":
+        return True
+    if TOOL_PROFILE == "core":
+        return name in CORE_TOOLS
+    if TOOL_PROFILE == "research":
+        return _is_read_tool(name)
+    return name.startswith("github_") or name in {"server_diagnostics", "moory_capabilities", "moory_tool_catalog"}
+
+
 class CompactMCPServer(MCPServer):
-    """Compact JSON whitespace only; retain output schemas and all structured data."""
+    """Compact and sanitize text outputs; preserve schemas and structured content."""
+
+    def tool(self, *args: Any, **kwargs: Any) -> Any:
+        def register(function: Any) -> Any:
+            name = kwargs.get("name") or function.__name__
+            if not _tool_exposed(name):
+                return function
+            if not hasattr(self, "_moory_registered_names"):
+                self._moory_registered_names = set()
+            self._moory_registered_names.add(name)
+            readonly = _is_read_tool(name)
+            options = {**kwargs, "annotations": ToolAnnotations(
+                read_only_hint=readonly, destructive_hint=not readonly,
+                idempotent_hint=readonly, open_world_hint=True,
+            )}
+            return super(CompactMCPServer, self).tool(*args, **options)(function)
+        return register
 
     async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
-        result = await super().call_tool(name, arguments, context)
-        if isinstance(result, CallToolResult) and len(result.content) == 1:
-            block = result.content[0]
-            if isinstance(block, TextContent):
+        started = time.monotonic()
+        result = None
+        redactions = 0
+        failed = False
+        try:
+            # Explicit defense if a client retained an old write schema.
+            if not _tool_exposed(name):
+                failed = True
+                result = CallToolResult(is_error=True, content=[TextContent(type="text", text="Tool is disabled by the server's operator-controlled policy.")])
+                return result
+            result = await super().call_tool(name, arguments, context)
+            if not isinstance(result, CallToolResult):
+                return result
+            structured, count = _safe_payload(result.structured_content)
+            redactions += count
+            blocks = []
+            for block in result.content:
+                if not isinstance(block, TextContent):
+                    blocks.append(block)
+                    continue
                 try:
                     parsed = json.loads(block.text)
                 except (ValueError, TypeError):
-                    return result
-                if isinstance(parsed, (dict, list)) and (
-                    result.structured_content is None or parsed == result.structured_content
-                ):
+                    text, spans = _mask_sensitive_text(block.text)
+                    redactions += len(spans)
+                else:
+                    safe, count = _safe_payload(parsed)
+                    redactions += count
+                    failed = failed or isinstance(safe, dict) and safe.get("ok") is False
                     try:
-                        compact = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+                        text = json.dumps(safe, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
                     except (ValueError, TypeError):
-                        return result
-                    result = result.model_copy(update={"content": [block.model_copy(update={"text": compact})]})
-        return result
+                        text, spans = _mask_sensitive_text(block.text)
+                        redactions += len(spans)
+                blocks.append(block.model_copy(update={"text": text}))
+            if redactions:
+                blocks.append(TextContent(type="text", text="Moory masked detected credential content. Masked values are not available through this tool."))
+            result = result.model_copy(update={"content": blocks, "structured_content": structured})
+            return result
+        except Exception as error:
+            failed = True
+            text, spans = _mask_sensitive_text(str(error))
+            redactions += len(spans)
+            result = CallToolResult(is_error=True, content=[TextContent(type="text", text=f"{type(error).__name__}: {text[:800]}")])
+            return result
+        finally:
+            elapsed = round((time.monotonic() - started) * 1000, 3)
+            size = sum(len(block.text.encode("utf-8")) for block in result.content if isinstance(block, TextContent)) if isinstance(result, CallToolResult) else 0
+            with METRICS_LOCK:
+                # Unknown tool names never grow metrics without bound.
+                if name in getattr(self, "_moory_registered_names", set()) and (name in TOOL_METRICS or len(TOOL_METRICS) < 256):
+                    item = TOOL_METRICS.setdefault(name, {"calls": 0, "errors": 0, "duration_ms_total": 0.0, "text_bytes_total": 0, "redaction_events": 0})
+                    item["calls"] += 1
+                    item["errors"] += int(failed or isinstance(result, CallToolResult) and result.is_error)
+                    item["duration_ms_total"] = round(item["duration_ms_total"] + elapsed, 3)
+                    item["text_bytes_total"] += size
+                    item["redaction_events"] += int(bool(redactions))
 
 
 mcp = CompactMCPServer(
@@ -194,7 +357,7 @@ def redact_github_text(text: str) -> str:
             result = pattern.sub(lambda match: match.group(1) + "[REDACTED]", result)
         else:
             result = pattern.sub("[REDACTED PRIVATE KEY]", result)
-    return result
+    return _mask_sensitive_text(result)[0]
 
 
 def _read_limited(response: Any, maximum_bytes: int) -> bytes:
@@ -204,7 +367,7 @@ def _read_limited(response: Any, maximum_bytes: int) -> bytes:
     return data
 
 
-def _github_http(
+def _github_http_impl(
     path: str,
     *,
     method: str = "GET",
@@ -247,6 +410,27 @@ def _github_http(
         raise RuntimeError(f"GitHub API HTTP {error.code}: {redact_github_text(message)[:500]}") from None
     except urllib.error.URLError as error:
         raise RuntimeError(f"GitHub API connection failed: {str(error.reason)[:300]}") from None
+
+
+def _github_http(path: str, *, method: str = "GET", token: str, body: dict[str, Any] | None = None,
+                 accept: str = "application/vnd.github+json", maximum_bytes: int = MAX_GH_JSON_BYTES) -> tuple[int, bytes, dict[str, str]]:
+    """Measure aggregate HTTP work without recording endpoints, credentials or payloads."""
+    started = time.monotonic()
+    failed = False
+    size = 0
+    try:
+        result = _github_http_impl(path, method=method, token=token, body=body, accept=accept, maximum_bytes=maximum_bytes)
+        size = len(result[1])
+        return result
+    except Exception:
+        failed = True
+        raise
+    finally:
+        with METRICS_LOCK:
+            HTTP_METRICS["calls"] += 1
+            HTTP_METRICS["errors"] += int(failed)
+            HTTP_METRICS["response_bytes"] += size
+            HTTP_METRICS["duration_ms_total"] = round(HTTP_METRICS["duration_ms_total"] + (time.monotonic() - started) * 1000, 3)
 
 
 def github_installation_token() -> tuple[str, dict[str, Any]]:
@@ -735,7 +919,7 @@ def audit(action: str, project: str, ok: bool, detail: str = "") -> bool:
         "action": action,
         "project": project,
         "ok": ok,
-        "detail": detail[:300],
+        "detail": _mask_sensitive_text(detail)[0][:300],
     }
     try:
         with AUDIT_LOG.open("a", encoding="utf-8") as file:
@@ -1033,7 +1217,7 @@ def read_tracked_file(
         digest = hashlib.sha256(data).hexdigest()
         if expected_sha256 and digest != expected_sha256:
             return {"ok": False, "error": "Source changed; restart the read", "sha256": digest}
-        text = data.decode("utf-8")
+        text, redaction_spans = _mask_sensitive_text(data.decode("utf-8"))
         lines = text.splitlines(keepends=True)
         if start_line < 1 or start_column < 0 or start_line > max(1, len(lines) + 1):
             raise ValueError("Invalid read cursor")
@@ -1054,6 +1238,10 @@ def read_tracked_file(
             "start_line": start_line, "start_column": start_column,
             "end_line": next_index + (1 if position else 0), "total_lines": len(lines),
             "content": content, "truncated": more,
+            "redacted": bool(redaction_spans),
+            **({"redaction_count": len(redaction_spans), "redaction_spans": redaction_spans[:32],
+                "redactions_truncated": len(redaction_spans) > 32, "sha256_scope": "original_file_bytes",
+                "content_scope": "credential-masked text; character offsets preserved"} if redaction_spans else {}),
             "next_cursor": {"start_line": next_index + 1, "start_column": position, "expected_sha256": digest} if more else None,
         }
     except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as error:
@@ -1088,6 +1276,20 @@ def read_tracked_files(project: ProjectName, requests: list[dict[str, Any]], ref
             "truncated": any(r.get("truncated") or not r.get("ok") for r in results)}
 
 
+def _masked_search_source(project, path, ref, cache):
+    """Mask the complete bounded source before extracting any search snippet."""
+    key = (path, ref)
+    if key not in cache:
+        data, _, _ = _tracked_file_bytes(project, path, ref)
+        text, spans = _mask_sensitive_text(data.decode("utf-8"))
+        value = (text.splitlines(), hashlib.sha256(data).hexdigest(), bool(spans))
+        # Bound per-call retained source text, even for searches spanning many files.
+        if len(cache) >= 4:
+            cache.pop(next(iter(cache)))
+        cache[key] = value
+    return cache[key]
+
+
 @mcp.tool()
 def search_tracked_code(
     project: ProjectName,
@@ -1103,53 +1305,48 @@ def search_tracked_code(
     ref_ok, resolved_ref = resolve_read_ref(project, ref)
     if not ref_ok:
         return {"ok": False, "error": resolved_ref}
+    args = ["grep", "-n", "-I", "--fixed-strings", "-e", text]
     if resolved_ref:
-        ref_grep = run_git(
-            project,
-            ["grep", "-n", "-I", "--fixed-strings", "-e", text, resolved_ref],
-            output_limit=1_000_000,
-        )
-        if ref_grep["exit_code"] == 1:
-            return {"ok": True, "ref": ref, "matches": [], "total_safe_matches": 0, "truncated": False, "filtered_sensitive_matches": 0}
-        if not ref_grep["ok"]:
-            return ref_grep
-        ref_matches: list[str] = []
-        ref_filtered = 0
-        for raw in ref_grep["output"].splitlines():
-            parsed = re.match(r"^[0-9a-f]{7,40}:(.+?):(\d+):(.*)$", raw)
-            if not parsed or is_sensitive_path(parsed.group(1)):
-                ref_filtered += 1
-                continue
-            ref_matches.append(f"{parsed.group(1)}:{parsed.group(2)}:{parsed.group(3)}")
-        return {
-            "ok": True,
-            "ref": ref,
-            "resolved_ref": resolved_ref,
-            "matches": ref_matches[:safe_limit],
-            "total_safe_matches": len(ref_matches),
-            "truncated": len(ref_matches) > safe_limit,
-            "filtered_sensitive_matches": ref_filtered,
-        }
-    result = run_git(
-        project,
-        ["grep", "-n", "-I", "--fixed-strings", "--", text],
-        output_limit=1_000_000,
-    )
+        args.append(resolved_ref)
+    result = run_git(project, args, output_limit=1_000_000)
     if result["exit_code"] == 1:
+        if resolved_ref:
+            return {"ok": True, "ref": ref, "resolved_ref": resolved_ref, "matches": [], "total_safe_matches": 0, "truncated": False, "filtered_sensitive_matches": 0}
         return {"ok": True, "exit_code": 0, "output": "", "error": ""}
-    if result["ok"]:
-        safe_lines: list[str] = []
-        filtered_sensitive_matches = 0
-        for raw in result["output"].splitlines():
-            match = re.match(r"^(.+):(\d+):(.*)$", raw)
-            if not match or safe_search_candidate(project, match.group(1)) is None:
-                filtered_sensitive_matches += 1
-                continue
-            safe_lines.append(raw)
-        result["output"] = "\n".join(safe_lines[:safe_limit])
-        result["total_safe_matches"] = len(safe_lines)
-        result["truncated"] = len(safe_lines) > safe_limit
-        result["filtered_sensitive_matches"] = filtered_sensitive_matches
+    if not result["ok"]:
+        return result
+    candidates = []
+    filtered = 0
+    for raw in result["output"].splitlines():
+        if resolved_ref:
+            raw = raw.removeprefix(resolved_ref + ":")
+        match = re.match(r"^(.+?):(\d+):(.*)$", raw)
+        if not match or is_sensitive_path(match.group(1)):
+            filtered += 1
+            continue
+        candidates.append((match.group(1), int(match.group(2))))
+    rendered = []
+    unavailable = 0
+    preview_truncated = False
+    redacted = False
+    source_cache = {}
+    for path, number in candidates[:safe_limit]:
+        try:
+            lines, digest, masked = _masked_search_source(project, path, resolved_ref, source_cache)
+            preview = lines[number - 1]
+        except (ValueError, OSError, UnicodeError, IndexError):
+            unavailable += 1
+            continue
+        preview_truncated |= len(preview) > 2000
+        redacted |= masked
+        rendered.append(f"{path}:{number}:{preview[:2000]}")
+    truncated = bool(result.get("truncated")) or len(candidates) > safe_limit or preview_truncated or bool(unavailable)
+    common = {"total_safe_matches": len(candidates), "truncated": truncated, "filtered_sensitive_matches": filtered,
+              "unavailable_matches": unavailable, "preview_truncated": preview_truncated, "redacted": redacted}
+    if resolved_ref:
+        return {"ok": True, "ref": ref, "resolved_ref": resolved_ref, "matches": rendered, **common}
+    result.update(common)
+    result["output"] = "\n".join(rendered)
     return result
 
 
@@ -1183,10 +1380,72 @@ def moory_capabilities() -> dict:
 
 
 @mcp.tool()
+def code_outline(project: ProjectName, path: str, ref: str = "", offset: int = 0, limit: int = 50, expected_sha256: str = "") -> dict:
+    """Read Python class/function structure without importing code; exact source remains available separately."""
+    try:
+        if Path(path).suffix.lower() != ".py":
+            return {"ok": False, "error": "Only Python AST outlines are currently supported"}
+        if offset < 0 or limit < 1 or limit > 200:
+            return {"ok": False, "error": "Invalid outline cursor or limit"}
+        data, resolved, blob = _tracked_file_bytes(project, path, ref)
+        digest = hashlib.sha256(data).hexdigest()
+        if expected_sha256 and expected_sha256 != digest:
+            return {"ok": False, "error": "Source changed; restart the outline", "sha256": digest}
+        tree = ast.parse(data.decode("utf-8"), filename=path)
+        symbols = []
+        def visit(node: ast.AST, parent: str = "") -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    qualified = f"{parent}.{child.name}" if parent else child.name
+                    symbol = {"name": child.name, "qualified_name": qualified,
+                              "kind": "class" if isinstance(child, ast.ClassDef) else "async_function" if isinstance(child, ast.AsyncFunctionDef) else "function",
+                              "start_line": min([child.lineno] + [d.lineno for d in child.decorator_list]), "end_line": child.end_lineno}
+                    if not isinstance(child, ast.ClassDef):
+                        symbol["parameters"] = [a.arg for a in child.args.posonlyargs + child.args.args + child.args.kwonlyargs]
+                        symbol["vararg"] = child.args.vararg.arg if child.args.vararg else None
+                        symbol["kwarg"] = child.args.kwarg.arg if child.args.kwarg else None
+                    symbols.append(symbol)
+                    visit(child, qualified)
+                else:
+                    visit(child, parent)
+        visit(tree)
+        selected = symbols[offset:offset + limit]
+        more = offset + len(selected) < len(symbols)
+        return {"ok": True, "path": path, "sha256": digest, "resolved_ref": resolved or None, "blob_sha": blob or None,
+                "representation": "structure_only; no bodies, defaults or docstrings; not edit evidence",
+                "symbols": selected, "total_symbols": len(symbols), "truncated": more,
+                "next_cursor": {"offset": offset + len(selected), "expected_sha256": digest} if more else None}
+    except (OSError, ValueError, UnicodeError, SyntaxError, RecursionError, subprocess.TimeoutExpired) as error:
+        return {"ok": False, "error": redact_github_text(str(error))[:500], "line": getattr(error, "lineno", None)}
+
+
+@mcp.tool()
+async def server_diagnostics() -> dict:
+    """Read build/schema identity and bounded aggregate metrics; never return arguments, tokens or payloads."""
+    tools = await mcp.list_tools()
+    schemas = [tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in tools]
+    fingerprint = hashlib.sha256(json.dumps(schemas, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    try:
+        source_sha = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    except OSError:
+        source_sha = None
+    with METRICS_LOCK:
+        metrics = {name: dict(values) for name, values in TOOL_METRICS.items()}
+        http_metrics = dict(HTTP_METRICS)
+    with LOG_CACHE_LOCK:
+        cache = {"entries": len(LOG_SNAPSHOT_CACHE), "text_bytes": sum(item["bytes"] for item in LOG_SNAPSHOT_CACHE.values()),
+                 "maximum_bytes": LOG_CACHE_MAX_BYTES, "ttl_seconds": LOG_CACHE_TTL}
+    return {"ok": True, "source_sha256": source_sha, "schema_sha256": fingerprint, "sdk_version": importlib.metadata.version("mcp"),
+            "profile": TOOL_PROFILE, "read_only": READ_ONLY, "registered_tool_count": len(tools),
+            "uptime_seconds": round(time.monotonic() - BOOT_MONOTONIC, 3), "tool_metrics": metrics, "github_http_metrics": http_metrics,
+            "log_cache": cache, "metrics_scope": "in-process aggregate text bytes and durations, not tokens or model latency; no payload logging"}
+
+
+@mcp.tool()
 def moory_tool_catalog(profile: Literal["core", "git", "github", "all"] = "core") -> dict:
     """Discover compact task-oriented tool profiles without hiding the full escape hatch."""
     groups = {
-        "core": ["moory_capabilities", "worker_context", "prepare_change_context", "validate_project", "apply_change_set", "commit_changes", "push_project", "inspect_ci_failure", "release_readiness"],
+        "core": ["server_diagnostics", "code_outline", "moory_capabilities", "worker_context", "prepare_change_context", "validate_project", "apply_change_set", "commit_changes", "push_project", "inspect_ci_failure", "release_readiness"],
         "git": ["git_status", "recent_commits", "git_diff", "list_tracked_files", "read_tracked_file", "read_tracked_files", "search_tracked_code", "sync_project", "apply_unified_patch", "validate_changes"],
         "github": ["github_health", "github_permission_diagnostics", "github_repo_summary", "github_list_issues", "github_get_issue", "github_list_pull_requests", "github_get_pull_request", "github_list_workflow_runs", "github_get_workflow_run", "github_get_actions_log", "github_list_artifacts", "github_list_releases", "github_get_release", "github_list_deployments", "github_get_deployment", "github_create_deployment", "github_create_deployment_status", "github_list_environments", "github_get_environment", "github_upsert_environment", "github_list_actions_variables", "github_upsert_actions_variable", "github_get_pages", "github_configure_pages", "github_request_pages_build"],
     }
@@ -1199,9 +1458,12 @@ def moory_tool_catalog(profile: Literal["core", "git", "github", "all"] = "core"
     return {
         "ok": True,
         "profile": profile,
-        "tools": selected,
+        "tools": {group: [name for name in names if _tool_exposed(name)] for group, names in selected.items()},
+        "omitted_by_policy": sum(not _tool_exposed(name) for names in selected.values() for name in names),
         "available_profiles": ["core", "git", "github", "all"],
         "dynamic_hiding": False,
+        "registration_profile": TOOL_PROFILE, "server_read_only": READ_ONLY,
+        "selection_policy": "Operator-controlled startup configuration filters registered tools; this catalog does not change session policy.",
         "next_recommended_action": "Start with the core profile; request git or github only when the task requires it.",
     }
 
@@ -1226,14 +1488,17 @@ def worker_context(
     if not head_result["ok"]:
         return head_result
     head_sha = head_result["output"].strip()
-    cache_key = (project, head_sha)
+    inventory = run_git(project, ["ls-files", "-z"], output_limit=2_000_000)
+    if not inventory.get("ok"):
+        return inventory
+    if inventory.get("truncated"):
+        return {"ok": False, "error": "Tracked-file inventory is incomplete", "truncated": True}
+    inventory_sha = hashlib.sha256(inventory["output"].encode("utf-8")).hexdigest()
+    cache_key = (project, head_sha, inventory_sha)
     with CONTEXT_CACHE_LOCK:
         cached = CONTEXT_CACHE.get(cache_key)
     if cached is None:
-        files_result = run_git(project, ["ls-files"], output_limit=2_000_000)
-        if not files_result["ok"]:
-            return files_result
-        files = files_result["output"].splitlines()
+        files = [path for path in inventory["output"].split("\x00") if path]
         with CONTEXT_CACHE_LOCK:
             if len(CONTEXT_CACHE) >= MAX_CONTEXT_CACHE_ENTRIES:
                 CONTEXT_CACHE.pop(next(iter(CONTEXT_CACHE)))
@@ -1246,22 +1511,23 @@ def worker_context(
     if operation == "overview":
         status = run_git(project, ["status", "--short", "--branch"])
         head = run_git(project, ["log", "-1", "--pretty=format:%H|%s"])
+        clean_status = run_git(project, ["status", "--porcelain"])
         extensions: dict[str, int] = {}
         for path in files:
             suffix = Path(path).suffix.lower() or "[none]"
             extensions[suffix] = extensions.get(suffix, 0) + 1
         result: dict[str, Any] = {
-            "ok": status["ok"] and head["ok"],
+            "ok": status["ok"] and head["ok"] and clean_status.get("ok", False),
             "project": project,
             "repository": str(config["repo"]),
             "allowed_branch": str(config["branch"]),
-            "clean": not bool(run_git(project, ["status", "--porcelain"])["output"].strip()),
+            "clean": bool(clean_status.get("ok") and not clean_status.get("output", "").strip()),
             "status": status["output"].strip(),
             "head": head["output"].strip(),
             "file_count": len(files),
             "top_extensions": sorted(extensions.items(), key=lambda item: (-item[1], item[0]))[:10],
             "detail": detail,
-            "cache": {"strategy": "commit_sha", "head_sha": head_sha, "hit": cache_hit},
+            "cache": {"strategy": "commit_sha+tracked_inventory", "head_sha": head_sha, "inventory_sha256": inventory_sha, "hit": cache_hit},
             "available_detail_levels": list(DETAIL_LEVELS),
             "truncated": False,
             "next_recommended_action": "Request evidence before making a code change." if detail == "summary" else "Read exact target ranges before editing.",
@@ -1300,21 +1566,31 @@ def worker_context(
         safe_raw_matches.append(raw)
     matches: list[dict[str, Any]] = []
     context_radius = 0 if detail == "summary" else 3 if detail == "evidence" else 12
-    root = config["path"].resolve()
+    source_cache = {}
+    unavailable = 0
+    snippets_truncated = False
     for raw in safe_raw_matches[:safe_limit]:
-        match = re.match(r"^(.+):(\d+):(.*)$", raw)
+        match = re.match(r"^(.+?):(\d+):(.*)$", raw)
         if not match:
             continue
-        path, line_text, preview = match.groups()
+        path, line_text, _ = match.groups()
         line_number = int(line_text)
-        item: dict[str, Any] = {"path": path, "line": line_number, "preview": preview[:500]}
+        try:
+            content, digest, redacted = _masked_search_source(project, path, "", source_cache)
+            preview = content[line_number - 1]
+        except (ValueError, OSError, UnicodeError, IndexError):
+            unavailable += 1
+            continue
+        clipped = len(preview) > 500
+        item: dict[str, Any] = {"path": path, "line": line_number, "preview": preview[:500],
+                                "sha256": digest, "redacted": redacted, "preview_truncated": clipped}
         if context_radius:
-            candidate = safe_search_candidate(project, path)
-            if candidate is not None:
-                content = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
-                start = max(1, line_number - context_radius)
-                end = min(len(content), line_number + context_radius)
-                item.update({"context_start": start, "context_end": end, "context": "\n".join(content[start - 1:end])})
+            start = max(1, line_number - context_radius)
+            end = min(len(content), line_number + context_radius)
+            context = "\n".join(content[start - 1:end])
+            clipped |= len(context) > 12000
+            item.update({"context_start": start, "context_end": end, "context": context[:12000], "context_truncated": len(context) > 12000})
+        snippets_truncated |= clipped
         matches.append(item)
     return {
         "ok": True,
@@ -1324,7 +1600,8 @@ def worker_context(
         "matches": matches,
         "total_matches": len(safe_raw_matches),
         "filtered_sensitive_matches": filtered_sensitive_matches,
-        "truncated": len(safe_raw_matches) > len(matches),
+        "truncated": bool(grep.get("truncated")) or len(safe_raw_matches) > len(matches) or snippets_truncated,
+        "unavailable_matches": unavailable,
         "available_detail_levels": list(DETAIL_LEVELS),
         "next_recommended_action": "Request evidence before editing." if detail == "summary" else "Read exact target ranges; use full only when this evidence is insufficient.",
     }
@@ -2231,7 +2508,7 @@ def github_get_workflow_run(project: ProjectName, run_id: int) -> dict:
         return {"ok": False, "error": redact_github_text(str(error))[:500]}
 
 
-def _actions_log_snapshot(project: ProjectName, run_id: int, contains: str = "") -> dict:
+def _download_actions_log_snapshot(project: ProjectName, run_id: int, contains: str = "") -> dict:
     run = require_positive_id(run_id, "run_id")
     if len(contains) > 200:
         raise ValueError("Log filter must be at most 200 characters")
@@ -2258,6 +2535,43 @@ def _actions_log_snapshot(project: ProjectName, run_id: int, contains: str = "")
     output = "\n".join(collected)
     return {"output": output, "files_scanned": len(members), "matching_lines": len(collected),
             "source_sha256": hashlib.sha256(output.encode("utf-8")).hexdigest()}
+
+
+def _actions_log_snapshot(project: ProjectName, run_id: int, contains: str = "") -> dict:
+    run = require_positive_id(run_id, "run_id")
+    if len(contains) > 200:
+        raise ValueError("Log filter must be at most 200 characters")
+    repo = github_repo(project)
+    token, _ = github_installation_token()
+    # Authorization is rechecked before every cache lookup. Never serve a snapshot
+    # after a failed access check, even when its TTL has not expired.
+    _, raw, _ = _github_http(f"/repos/{repo}/actions/runs/{run}", token=token, maximum_bytes=MAX_GH_JSON_BYTES)
+    try:
+        run_info = json.loads(raw)
+    except (ValueError, UnicodeError):
+        run_info = {}
+    if not isinstance(run_info, dict):
+        run_info = {}
+    cacheable = run_info.get("status") == "completed" and all(k in run_info for k in ("run_attempt", "updated_at", "head_sha"))
+    key = (project, repo, run, hashlib.sha256(token.encode()).hexdigest(), run_info.get("run_attempt"), run_info.get("updated_at"), run_info.get("head_sha"), hashlib.sha256(contains.lower().strip().encode()).hexdigest())
+    now = time.monotonic()
+    with LOG_CACHE_LOCK:
+        for stale in [k for k, v in LOG_SNAPSHOT_CACHE.items() if v["expires"] <= now]:
+            del LOG_SNAPSHOT_CACHE[stale]
+        if cacheable and key in LOG_SNAPSHOT_CACHE:
+            LOG_SNAPSHOT_CACHE.move_to_end(key)
+            return {**LOG_SNAPSHOT_CACHE[key]["value"], "cache": {"hit": True, "ttl_seconds": LOG_CACHE_TTL}}
+    value = _download_actions_log_snapshot(project, run_id, contains)
+    size = len(value.get("output", "").encode("utf-8"))
+    # A credential can rotate while the download runs; don't store under an old identity.
+    current_token, _ = github_installation_token()
+    if cacheable and current_token == token and size <= LOG_CACHE_ENTRY_MAX_BYTES:
+        with LOG_CACHE_LOCK:
+            LOG_SNAPSHOT_CACHE[key] = {"value": dict(value), "bytes": size, "expires": time.monotonic() + LOG_CACHE_TTL}
+            LOG_SNAPSHOT_CACHE.move_to_end(key)
+            while len(LOG_SNAPSHOT_CACHE) > LOG_CACHE_MAX_ENTRIES or sum(v["bytes"] for v in LOG_SNAPSHOT_CACHE.values()) > LOG_CACHE_MAX_BYTES:
+                LOG_SNAPSHOT_CACHE.popitem(last=False)
+    return {**value, "cache": {"hit": False, "eligible": cacheable and size <= LOG_CACHE_ENTRY_MAX_BYTES, "ttl_seconds": LOG_CACHE_TTL}}
 
 
 @mcp.tool()

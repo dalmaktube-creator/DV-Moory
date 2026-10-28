@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Mask detected credentials in ordinary file reads before pagination and in outbound text/structured data, disclose redaction, retain original-byte SHA guards, and sanitize audit details.
+- Fix stale overview maps after staged additions/deletions by fingerprinting tracked-file inventories; reject incomplete inventories and failed clean-status checks.
+- Add operator-controlled registration profiles and strict read-only enforcement, with conservative MCP behavior annotations; preserve the full legacy default.
+- Add paginated, read-only Python AST outlines and aggregate source/schema/SDK/HTTP/tool diagnostics without payload logging.
+- Cache completed-run redacted CI snapshots within bounded memory/TTL, with live authorization and backend-identity/run-revision isolation.
+- Add regression and real HTTP coverage for research-derived security, correctness and context improvements; leave deployment/rollback machinery unchanged.
+
 - Compact generated MCP JSON without dropping keys, output schemas or structured content; retain granular tools.
 - Add exact UTF-8 multi-file reads, byte-content SHA-256 identities and resumable line/column cursors, including very long lines and CRLF files.
 - Hold the reentrant write lock across change-set identity checks, apply, static validation and rollback; validate new text files and remove additions when rollback is required.
